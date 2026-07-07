@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useMemo } from "react";
+import * as XLSX from "xlsx";
 import {
   Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
   ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
   UserPlus, Pencil, Eye, EyeOff, Briefcase, DollarSign, Kanban,
-  Table2, ArrowRight, Building2, Percent, CheckCircle2
+  Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -203,6 +204,7 @@ export default function App() {
 
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
+  nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
   if (isAdmin) nav.push(["admin", "Admin Portal", Shield]);
@@ -251,15 +253,26 @@ export default function App() {
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
-            userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} />
+            userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog} />
         )}
         {view === "log" && canLog && (
-          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} />
+          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} />
         )}
         {view === "pipeline" && (
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
             liveUser={liveUser} users={users} visibleUserIds={visibleUserIds}
             entries={entries} saveEntries={saveEntries} />
+        )}
+        {view === "activity" && (
+          <>
+            <div style={{ marginBottom: 20 }}>
+              <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Activity Log</h1>
+              <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
+                Every activity record in your scope. Click a column to sort, or export to Excel.
+              </p>
+            </div>
+            <ActivityTable entries={visibleEntries} users={users} liveUser={liveUser} />
+          </>
         )}
         {view === "goals" && canManageGoals && (
           <GoalsManager users={users} visibleUserIds={visibleUserIds} liveUser={liveUser}
@@ -403,7 +416,120 @@ function Login({ onLogin }) {
   );
 }
 
-function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds }) {
+// Spreadsheet-style table of activity records, with Excel export.
+function ActivityTable({ entries, users, liveUser, compact }) {
+  const [sortKey, setSortKey] = useState("date");
+  const [sortDir, setSortDir] = useState("desc");
+  const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
+  const repOf = (e) => e.taggedRepId ? nameOf(e.taggedRepId) : "Self-generated";
+
+  const rows = useMemo(() => {
+    const r = [...entries];
+    r.sort((a, b) => {
+      let av, bv;
+      switch (sortKey) {
+        case "company": av = (a.company || "").toLowerCase(); bv = (b.company || "").toLowerCase(); break;
+        case "rep": av = repOf(a).toLowerCase(); bv = repOf(b).toLowerCase(); break;
+        case "logged": av = nameOf(a.userId).toLowerCase(); bv = nameOf(b.userId).toLowerCase(); break;
+        case "calls": av = a.calls || 0; bv = b.calls || 0; break;
+        case "emails": av = a.emails || 0; bv = b.emails || 0; break;
+        case "appts": av = a.appts || 0; bv = b.appts || 0; break;
+        default: av = a.date || ""; bv = b.date || "";
+      }
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return (a.id < b.id ? 1 : -1);
+    });
+    return r;
+  }, [entries, sortKey, sortDir, users]);
+
+  const setSort = (k) => { if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc")); else { setSortKey(k); setSortDir(k === "date" ? "desc" : "asc"); } };
+
+  const exportXlsx = () => {
+    const data = rows.map((e) => ({
+      Date: e.date,
+      Company: e.company || "",
+      BAN: e.ban || "",
+      Contact: e.contact || "",
+      Phone: e.phone || "",
+      Email: e.email || "",
+      Calls: e.calls || 0,
+      Emails: e.emails || 0,
+      Appointments: e.appts || 0,
+      "Logged by": nameOf(e.userId),
+      "Working for": repOf(e),
+      Notes: e.notes || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [
+      { wch: 11 }, { wch: 24 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 24 },
+      { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 40 },
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Activity");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `tellemica-activity-${stamp}.xlsx`);
+  };
+
+  const cols = [
+    ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["contact", "Contact"],
+    ["phone", "Phone"], ["email", "Email"], ["calls", "Calls"], ["emails", "Emails"],
+    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Working for"], ["notes", "Notes"],
+  ];
+  const sortable = new Set(["date", "company", "calls", "emails", "appts", "logged", "rep"]);
+
+  return (
+    <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", borderBottom: `1px solid ${LINE_C}`, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Table2 size={17} color={INK} />
+          <span style={{ fontSize: 15, fontWeight: 600 }}>Activity records</span>
+          <span style={{ fontSize: 12.5, opacity: 0.5 }}>({rows.length})</span>
+        </div>
+        <button onClick={exportXlsx} disabled={rows.length === 0} className="tap"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: rows.length ? INK : LINE_C, color: rows.length ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: rows.length ? "pointer" : "default" }}>
+          <Download size={15} /> Export to Excel
+        </button>
+      </div>
+      <div style={{ overflowX: "auto", maxHeight: compact ? 420 : "none" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+          <thead>
+            <tr style={{ background: "#F1F5F9", position: "sticky", top: 0, zIndex: 1 }}>
+              {cols.map(([k, label]) => (
+                <th key={k} onClick={() => sortable.has(k) && setSort(k)}
+                  style={{ textAlign: (["calls", "emails", "appts"].includes(k)) ? "center" : "left", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: sortable.has(k) ? "pointer" : "default", borderBottom: `1px solid ${LINE_C}` }}>
+                  {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={cols.length} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No activity records yet.</td></tr>
+            ) : rows.map((e) => (
+              <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.date}</td>
+                <td style={{ padding: "9px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>{e.company || "—"}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.ban || "—"}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.contact || "—"}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.phone || "—"}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.email || "—"}</td>
+                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.calls || 0}</td>
+                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.emails || 0}</td>
+                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.appts || 0}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{nameOf(e.userId)}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{repOf(e)}</td>
+                <td style={{ padding: "9px 12px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.notes || ""}>{e.notes || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds, setView, canLog }) {
   const role = liveUser.role;
   const scopeUsers = users.filter((u) => visibleUserIds.includes(u.id));
   const repUsers = scopeUsers.filter((u) => u.role === "bdr" || u.role === "sales");
@@ -538,6 +664,12 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
               <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 11, pointerEvents: "none", opacity: 0.5 }} />
             </div>
           )}
+          {canLog && (
+            <button onClick={() => setView("log")} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 8px rgba(24,84,187,.25)" }}>
+              <Plus size={16} /> Add Activity
+            </button>
+          )}
         </div>
       </div>
 
@@ -642,6 +774,10 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
           )}
         </Panel>
       )}
+
+      <div style={{ marginTop: 16 }}>
+        <ActivityTable entries={scoped} users={users} liveUser={liveUser} compact />
+      </div>
     </>
   );
 }
@@ -849,24 +985,48 @@ function Funnel({ calls, emails, appts }) {
   );
 }
 
-function LogView({ liveUser, entries, saveEntries, users }) {
+function LogView({ liveUser, entries, saveEntries, users, allEntries }) {
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
+  const [showSuggest, setShowSuggest] = useState(false);
+
+  // Unique company names from everything the user can see, for autocomplete.
+  const companyIndex = useMemo(() => {
+    const map = new Map();
+    (allEntries || entries).forEach((e) => {
+      const c = (e.company || "").trim();
+      if (c && !map.has(c.toLowerCase())) map.set(c.toLowerCase(), { company: c, ban: e.ban || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "" });
+    });
+    return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
+  }, [allEntries, entries]);
+
+  const suggestions = form.company.trim().length >= 1
+    ? companyIndex.filter((c) => c.company.toLowerCase().includes(form.company.trim().toLowerCase())).slice(0, 6)
+    : [];
+
+  const pickCompany = (c) => {
+    // Reuse known details for this company, but let the user override any field.
+    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email }));
+    setShowSuggest(false);
+  };
 
   const submit = async () => {
+    if (!form.company.trim()) { setErr("Company name is required."); return; }
     if (isBDR && !form.workingFor) { setErr("Please choose who you're working for."); return; }
     setErr("");
     const taggedRepId = form.workingFor && form.workingFor !== "self" ? form.workingFor : null;
     await saveEntries(() => api.addEntry({
       userId: liveUser.id, date: form.date,
+      company: form.company.trim(), ban: form.ban.trim(), contact: form.contact.trim(),
+      phone: form.phone.trim(), email: form.email.trim(),
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
       taggedRepId,
     }));
-    setForm({ ...form, calls: "", emails: "", appts: "", notes: "" });
+    setForm({ ...form, company: "", ban: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
 
@@ -894,6 +1054,34 @@ function LogView({ liveUser, entries, saveEntries, users }) {
             </div>
           </Field>
         )}
+        <Field label="Company name *">
+          <div style={{ position: "relative" }}>
+            <input value={form.company} autoComplete="off"
+              onChange={(e) => { setForm({ ...form, company: e.target.value }); setShowSuggest(true); setErr(""); }}
+              onFocus={() => setShowSuggest(true)}
+              onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+              style={inputStyle} placeholder="Start typing to search existing companies…" />
+            {showSuggest && suggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 20, background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, marginTop: 4, boxShadow: "0 10px 30px rgba(8,20,40,.15)", overflow: "hidden" }}>
+                {suggestions.map((c) => (
+                  <button key={c.company} type="button" onMouseDown={(ev) => { ev.preventDefault(); pickCompany(c); }} className="tap"
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", background: "transparent", border: "none", borderBottom: `1px solid ${LINE_C}`, cursor: "pointer", fontSize: 14 }}>
+                    <span style={{ fontWeight: 600 }}>{c.company}</span>
+                    {c.contact ? <span style={{ opacity: 0.55, fontSize: 12.5 }}> · {c.contact}</span> : null}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="BAN"><input value={form.ban} onChange={(e) => setForm({ ...form, ban: e.target.value })} style={inputStyle} placeholder="Billing account #" /></Field>
+          <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
+          <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
+        </div>
         <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="Calls"><input type="number" min="0" placeholder="0" value={form.calls} onChange={(e) => setForm({ ...form, calls: e.target.value })} style={inputStyle} /></Field>
