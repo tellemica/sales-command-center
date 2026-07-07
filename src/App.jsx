@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import {
   Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
   ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
@@ -1012,16 +1013,29 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
 
   const TEMPLATE_COLS = ["Date", "Company", "BAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Working For", "Rep/Owner", "Notes"];
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    const N = 2000; // rows the dropdowns cover
     const example = {
       Date: TODAY(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
-      Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 12, Emails: 4, Appointments: 1,
+      Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 1, Emails: 1, Appointments: 1,
       "Working For": "Self-generated", "Rep/Owner": liveUser.name, Notes: "Intro call, follow up next week",
     };
     const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
     const ws = XLSX.utils.json_to_sheet([example, blank], { header: TEMPLATE_COLS });
     ws["!cols"] = [{ wch: 11 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
-    // Reference sheet listing valid Sales Rep names for the "Working For" column, and assignable people.
+
+    // The name options for the two person-columns.
+    const workingForOpts = ["Self-generated", ...salesReps.map((s) => s.name)];
+    const repOwnerOpts = assignable.map((u) => u.name);
+
+    // Hidden "Lists" sheet holds the option values; dropdowns reference these ranges
+    // (avoids Excel's 255-char inline-list limit and any comma-in-name issues).
+    const maxLen = Math.max(workingForOpts.length, repOwnerOpts.length);
+    const listAoa = [["WorkingFor", "RepOwner"]];
+    for (let i = 0; i < maxLen; i++) listAoa.push([workingForOpts[i] || "", repOwnerOpts[i] || ""]);
+    const wsList = XLSX.utils.aoa_to_sheet(listAoa);
+
+    // Human-readable reference sheet (visible) so users know what's valid.
     const ref = [
       { Column: "Working For", "Accepted values": "Self-generated" },
       ...salesReps.map((s) => ({ Column: "Working For", "Accepted values": s.name })),
@@ -1029,10 +1043,44 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
     ];
     const wsRef = XLSX.utils.json_to_sheet(ref);
     wsRef["!cols"] = [{ wch: 16 }, { wch: 40 }];
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Activity");
     XLSX.utils.book_append_sheet(wb, wsRef, "Reference");
-    XLSX.writeFile(wb, "tellemica-activity-template.xlsx");
+    XLSX.utils.book_append_sheet(wb, wsList, "Lists");
+
+    const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+
+    // Inject data-validation dropdowns into the Activity sheet (sheet1) via zip patching.
+    try {
+      const zip = await JSZip.loadAsync(buf);
+      const path = "xl/worksheets/sheet1.xml";
+      let xml = await zip.file(path).async("string");
+      const wfEnd = workingForOpts.length + 1;   // Lists!$A$2:$A$n
+      const roEnd = repOwnerOpts.length + 1;      // Lists!$B$2:$B$n
+      const dvs = [
+        { sqref: `G2:G${N + 1}`, f: '"1"' },      // Calls
+        { sqref: `H2:H${N + 1}`, f: '"1"' },      // Emails
+        { sqref: `I2:I${N + 1}`, f: '"1"' },      // Appointments
+        { sqref: `J2:J${N + 1}`, f: `Lists!$A$2:$A$${wfEnd}` },  // Working For
+        { sqref: `K2:K${N + 1}`, f: `Lists!$B$2:$B$${roEnd}` }, // Rep/Owner
+      ];
+      const dvXml = `<dataValidations count="${dvs.length}">` +
+        dvs.map((d) => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${d.f}</formula1></dataValidation>`).join("") +
+        `</dataValidations>`;
+      // dataValidations must sit after sheetData; inserting right before </worksheet> is valid.
+      xml = xml.replace("</worksheet>", dvXml + "</worksheet>");
+      zip.file(path, xml);
+      const outBlob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(outBlob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "tellemica-activity-template.xlsx";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      // Fallback: if patching fails for any reason, still give them the plain template.
+      XLSX.writeFile(wb, "tellemica-activity-template.xlsx");
+    }
   };
 
   // Match a typed name to a user in a candidate list (case-insensitive, trimmed).
