@@ -29,6 +29,8 @@ const APPT = "#0E9EE1";     // cyan — appointments (the goal keeps the accent)
 const LINE_C = "#DCE4EC";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
+// MM-DD-YYYY for the bulk-upload template (display format).
+const TODAY_US = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 const ROLES = {
@@ -1002,7 +1004,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   const role = liveUser.role;
   const isPrivileged = role === "admin" || role === "management";
   const salesReps = (users || []).filter((u) => u.role === "sales");
-  // People this uploader may attribute rows to (Rep/Owner column). Everyone can log as themselves.
+  // People this uploader may attribute rows to (BDR/Sale Rep column). Everyone can log as themselves.
   const assignable = (users || []).filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales" || u.id === liveUser.id));
 
   const [rows, setRows] = useState(null);     // validated preview rows
@@ -1011,18 +1013,24 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   const [done, setDone] = useState("");
   const fileRef = React.useRef(null);
 
-  const TEMPLATE_COLS = ["Date", "Company", "BAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Working For", "Rep/Owner", "Notes"];
+  const TEMPLATE_COLS = ["Date", "Company", "BAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Prospecting For", "BDR/Sale Rep [You]", "Notes"];
 
   const downloadTemplate = async () => {
     const N = 2000; // rows the dropdowns cover
     const example = {
-      Date: TODAY(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
+      Date: TODAY_US(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
       Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 1, Emails: 1, Appointments: 1,
-      "Working For": "Self-generated", "Rep/Owner": liveUser.name, Notes: "Intro call, follow up next week",
+      "Prospecting For": "Self-generated", "BDR/Sale Rep [You]": liveUser.name, Notes: "Intro call, follow up next week",
     };
     const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
     const ws = XLSX.utils.json_to_sheet([example, blank], { header: TEMPLATE_COLS });
-    ws["!cols"] = [{ wch: 11 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
+    // Force the Date column (A) to display MM-DD-YYYY for any date the user types.
+    for (let row = 2; row <= 2001; row++) {
+      const addr = `A${row}`;
+      if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+      ws[addr].z = "mm-dd-yyyy";
+    }
 
     // The name options for the two person-columns.
     const workingForOpts = ["Self-generated", ...salesReps.map((s) => s.name)];
@@ -1037,9 +1045,9 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
 
     // Human-readable reference sheet (visible) so users know what's valid.
     const ref = [
-      { Column: "Working For", "Accepted values": "Self-generated" },
-      ...salesReps.map((s) => ({ Column: "Working For", "Accepted values": s.name })),
-      ...assignable.map((u) => ({ Column: "Rep/Owner", "Accepted values": `${u.name} (${ROLES[u.role].label})` })),
+      { Column: "Prospecting For", "Accepted values": "Self-generated" },
+      ...salesReps.map((s) => ({ Column: "Prospecting For", "Accepted values": s.name })),
+      ...assignable.map((u) => ({ Column: "BDR/Sale Rep [You]", "Accepted values": `${u.name} (${ROLES[u.role].label})` })),
     ];
     const wsRef = XLSX.utils.json_to_sheet(ref);
     wsRef["!cols"] = [{ wch: 16 }, { wch: 40 }];
@@ -1048,6 +1056,13 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
     XLSX.utils.book_append_sheet(wb, ws, "Activity");
     XLSX.utils.book_append_sheet(wb, wsRef, "Reference");
     XLSX.utils.book_append_sheet(wb, wsList, "Lists");
+
+    // Hide the helper tabs so users only see the Activity sheet.
+    // (They still exist so the dropdowns keep working.) hidden:1 = hidden, 2 = very hidden.
+    wb.Workbook = wb.Workbook || {};
+    wb.Workbook.Sheets = wb.SheetNames.map((name) => ({
+      name, Hidden: name === "Activity" ? 0 : 1,
+    }));
 
     const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
 
@@ -1059,17 +1074,22 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
       const wfEnd = workingForOpts.length + 1;   // Lists!$A$2:$A$n
       const roEnd = repOwnerOpts.length + 1;      // Lists!$B$2:$B$n
       const dvs = [
-        { sqref: `G2:G${N + 1}`, f: '"1"' },      // Calls
-        { sqref: `H2:H${N + 1}`, f: '"1"' },      // Emails
-        { sqref: `I2:I${N + 1}`, f: '"1"' },      // Appointments
-        { sqref: `J2:J${N + 1}`, f: `Lists!$A$2:$A$${wfEnd}` },  // Working For
-        { sqref: `K2:K${N + 1}`, f: `Lists!$B$2:$B$${roEnd}` }, // Rep/Owner
+        { sqref: `G2:G${N + 1}`, f: '"0,1"' },      // Calls
+        { sqref: `H2:H${N + 1}`, f: '"0,1"' },      // Emails
+        { sqref: `I2:I${N + 1}`, f: '"0,1"' },      // Appointments
+        { sqref: `J2:J${N + 1}`, f: `Lists!$A$2:$A$${wfEnd}` },  // Prospecting For
+        { sqref: `K2:K${N + 1}`, f: `Lists!$B$2:$B$${roEnd}` }, // BDR/Sale Rep [You]
       ];
       const dvXml = `<dataValidations count="${dvs.length}">` +
         dvs.map((d) => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${d.f}</formula1></dataValidation>`).join("") +
         `</dataValidations>`;
-      // dataValidations must sit after sheetData; inserting right before </worksheet> is valid.
-      xml = xml.replace("</worksheet>", dvXml + "</worksheet>");
+      // dataValidations must appear right after </sheetData> and before any
+      // ignoredErrors/pageMargins elements, or Excel flags the file as corrupt.
+      if (xml.includes("</sheetData>")) {
+        xml = xml.replace("</sheetData>", "</sheetData>" + dvXml);
+      } else {
+        xml = xml.replace("</worksheet>", dvXml + "</worksheet>");
+      }
       zip.file(path, xml);
       const outBlob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(outBlob);
@@ -1101,33 +1121,50 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
       const company = String(r["Company"] || "").trim();
       if (!company) errors.push("Company is required");
 
-      // Date: accept blank (default today) or a parseable date.
+      // Date: accept blank (default today) or MM-DD-YYYY (also tolerant of / and 2-digit year).
       let date = String(r["Date"] || "").trim();
       if (!date) date = TODAY();
       else {
-        const d = new Date(date);
-        if (isNaN(d.getTime())) errors.push(`Unrecognized date "${date}"`);
-        else date = d.toISOString().slice(0, 10);
+        // Excel may hand us a serial number, an ISO string, or the MM-DD-YYYY text we ask for.
+        const iso = (() => {
+          // Already ISO (YYYY-MM-DD)?
+          const isoM = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (isoM) return date;
+          // MM-DD-YYYY or MM/DD/YYYY (2- or 4-digit year)
+          const m = date.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})$/);
+          if (m) {
+            let [, mm, dd, yy] = m;
+            if (yy.length === 2) yy = "20" + yy;
+            mm = mm.padStart(2, "0"); dd = dd.padStart(2, "0");
+            const test = new Date(`${yy}-${mm}-${dd}T00:00`);
+            if (!isNaN(test.getTime())) return `${yy}-${mm}-${dd}`;
+          }
+          // Fallback: let Date try (handles some Excel formats)
+          const d = new Date(date);
+          return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+        })();
+        if (!iso) errors.push(`Date "${date}" isn't in MM-DD-YYYY format`);
+        else date = iso;
       }
 
       const numOf = (v) => { const n = parseInt(String(v).replace(/[^0-9-]/g, ""), 10); return isNaN(n) ? 0 : Math.max(0, n); };
       const calls = numOf(r["Calls"]); const emails = numOf(r["Emails"]); const appts = numOf(r["Appointments"]);
 
-      // Working For -> tagged_rep_id (a sales rep) or null for self-generated.
+      // Prospecting For -> tagged_rep_id (a sales rep) or null for self-generated.
       let taggedRepId = null;
-      const wf = String(r["Working For"] || "").trim();
+      const wf = String(r["Prospecting For"] || "").trim();
       if (wf && wf.toLowerCase() !== "self-generated" && wf.toLowerCase() !== "self") {
         const rep = matchUser(wf, salesReps);
-        if (!rep) errors.push(`"Working For" — no Sales Rep named "${wf}"`);
+        if (!rep) errors.push(`"Prospecting For" — no Sales Rep named "${wf}"`);
         else taggedRepId = rep.id;
       }
 
-      // Rep/Owner -> whose activity this row is. Default = uploader.
+      // BDR/Sale Rep -> whose activity this row is. Default = uploader.
       let userId = liveUser.id;
-      const owner = String(r["Rep/Owner"] || "").trim();
+      const owner = String(r["BDR/Sale Rep [You]"] || "").trim();
       if (owner) {
         const u = matchUser(owner, assignable);
-        if (!u) errors.push(`"Rep/Owner" — "${owner}" isn't someone you can assign`);
+        if (!u) errors.push(`"BDR/Sale Rep [You]" — "${owner}" isn't someone you can assign`);
         else if (u.id !== liveUser.id && !isPrivileged) errors.push(`Only managers/admins can assign rows to others`);
         else userId = u.id;
       }
