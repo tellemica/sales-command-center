@@ -266,7 +266,6 @@ function Login({ onLogin }) {
         <div style={{ background: INK, padding: "34px 26px 26px", textAlign: "center" }}>
           <TellemicaLogo height={26} light wordmark />
           <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "#fff", marginTop: 12 }}>Sales Command Center</div>
-          <div style={{ fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: "rgba(255,255,255,.5)", marginTop: 4 }}>Secure Team Access</div>
         </div>
 
         {/* Tabs */}
@@ -302,7 +301,7 @@ function Login({ onLogin }) {
               {err && <div style={{ color: "#B4453F", fontSize: 13, margin: "6px 0 0" }}>{err}</div>}
               <button onClick={submit} disabled={busy} className="tap"
                 style={{ width: "100%", marginTop: 20, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1, boxShadow: "0 6px 16px rgba(24,84,187,.3)" }}>
-                {busy ? "Signing in…" : "Sign In to Portal"}
+                {busy ? "Signing in…" : "Sign into CRM"}
               </button>
               <div style={{ textAlign: "center", marginTop: 18, fontSize: 13.5, color: "#5B6B7F" }}>
                 No account?{" "}
