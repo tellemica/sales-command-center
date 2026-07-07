@@ -217,11 +217,12 @@ export default function App() {
         .tap { cursor: pointer; transition: all .15s ease; }
         .tap:hover { transform: translateY(-1px); }
         @keyframes addPulse {
-          0%, 100% { box-shadow: 0 6px 20px rgba(15,150,220,.40), 0 0 0 1px rgba(255,255,255,.12) inset; }
-          50% { box-shadow: 0 8px 28px rgba(15,150,220,.70), 0 0 0 1px rgba(255,255,255,.18) inset; }
+          0%, 100% { box-shadow: 0 8px 26px rgba(15,150,220,.50), 0 0 0 1px rgba(255,255,255,.14) inset; }
+          50% { box-shadow: 0 10px 34px rgba(15,150,220,.82), 0 0 0 1px rgba(255,255,255,.20) inset; }
         }
-        .addactivity-btn { animation: addPulse 2.4s ease-in-out infinite; }
-        .addactivity-btn:hover { transform: translateY(-2px) scale(1.02); animation: none; box-shadow: 0 10px 30px rgba(15,150,220,.75); }
+        .fab-add { animation: addPulse 2.4s ease-in-out infinite; }
+        .fab-add:hover { transform: translateY(-2px) scale(1.04); animation: none; box-shadow: 0 12px 36px rgba(15,150,220,.85); }
+        @media (max-width: 720px){ .fab-add{ right: 16px !important; bottom: 16px !important; padding: 14px 20px !important; } }
         input, select, textarea { font-family: inherit; }
         @media (max-width: 720px){ .grid-4{grid-template-columns:1fr 1fr!important} .charts{grid-template-columns:1fr!important} .logwrap{grid-template-columns:1fr!important} }
       `}</style>
@@ -288,6 +289,16 @@ export default function App() {
           <AdminPortal users={users} saveUsers={saveUsers} entries={entries} saveEntries={saveEntries} deals={deals} saveDeals={saveDeals} />
         )}
       </main>
+
+      {canLog && view !== "log" && (
+        <button onClick={() => setView("log")} className="fab-add" aria-label="Add Activity"
+          style={{ position: "fixed", right: 24, bottom: 24, zIndex: 60, display: "flex", alignItems: "center", gap: 9,
+            background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 999,
+            padding: "15px 24px", fontSize: 15.5, fontWeight: 700, letterSpacing: 0.2, cursor: "pointer",
+            boxShadow: "0 8px 26px rgba(15,150,220,.55), 0 0 0 1px rgba(255,255,255,.14) inset" }}>
+          <Plus size={20} strokeWidth={2.7} /> Add Activity
+        </button>
+      )}
     </div>
   );
 }
@@ -669,12 +680,6 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
               </select>
               <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 11, pointerEvents: "none", opacity: 0.5 }} />
             </div>
-          )}
-          {canLog && (
-            <button onClick={() => setView("log")} className="tap addactivity-btn"
-              style={{ display: "flex", alignItems: "center", gap: 8, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 11, padding: "12px 22px", fontSize: 15, fontWeight: 700, letterSpacing: 0.2, cursor: "pointer", boxShadow: `0 6px 20px rgba(15,150,220,.45), 0 0 0 1px rgba(255,255,255,.12) inset` }}>
-              <Plus size={18} strokeWidth={2.6} /> Add Activity
-            </button>
           )}
         </div>
       </div>
