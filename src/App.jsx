@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
-  ChevronDown, X, Users, BarChart3, Trash2, Shield, LogOut,
+  ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
   UserPlus, Pencil, Eye, EyeOff, Briefcase, DollarSign, Kanban,
   Table2, ArrowRight, Building2, Percent, CheckCircle2
 } from "lucide-react";
@@ -36,7 +36,30 @@ const ROLES = {
   bdr: { label: "BDR", rank: 1, color: CALL },
 };
 
-const DEFAULT_GOALS = { calls: 250, emails: 150, appts: 15 };
+const DEFAULT_GOALS = { calls: 1000, emails: 650, appts: 65 };
+
+// ---- Month reporting helpers ----
+// Portal starts fresh in June 2026; build the selectable month list from there to now.
+const FIRST_MONTH = "2026-06"; // earliest month with data
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const CURRENT_MONTH = monthKey(new Date());
+// Returns list of "YYYY-MM" from FIRST_MONTH through the current month (inclusive), newest first.
+const buildMonthOptions = () => {
+  const out = [];
+  const [fy, fm] = FIRST_MONTH.split("-").map(Number);
+  const start = new Date(fy, fm - 1, 1);
+  const now = new Date();
+  const cur = new Date(now.getFullYear(), now.getMonth(), 1);
+  let d = new Date(start);
+  while (d <= cur) { out.push(monthKey(d)); d.setMonth(d.getMonth() + 1); }
+  return out.reverse();
+};
+const monthLabel = (mk) => {
+  const [y, m] = mk.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+};
+// True if an entry/deal date (YYYY-MM-DD) falls in the given month key.
+const inMonth = (dateStr, mk) => (dateStr || "").slice(0, 7) === mk;
 
 // Pipeline stages: ordered flow with per-stage color and a default win-probability
 // used for the weighted forecast. Closed Won/Lost are terminal.
@@ -87,6 +110,7 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [deals, setDeals] = useState([]);
   const [goals, setGoals] = useState(DEFAULT_GOALS);
+  const [userGoals, setUserGoals] = useState({});   // per-person overrides { userId: {calls,emails,appts} }
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
   const [view, setView] = useState("dashboard");
   const [loaded, setLoaded] = useState(false);       // finished checking session
@@ -94,10 +118,10 @@ export default function App() {
 
   // Pull all data the signed-in user is allowed to see. RLS filters server-side.
   const refetch = async () => {
-    const [us, es, ds, g] = await Promise.all([
-      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(),
+    const [us, es, ds, g, ug] = await Promise.all([
+      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(),
     ]);
-    setUsers(us); setEntries(es); setDeals(ds);
+    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug);
     setGoals({ calls: g.calls, emails: g.emails, appts: g.appts });
   };
 
@@ -135,6 +159,7 @@ export default function App() {
   const saveDeals = async (mutate) => { await mutate(); await refetch(); };
   const saveUsers = async (mutate) => { await mutate(); await refetch(); };
   const saveGoals = async (g) => { await api.saveGoals(g); setGoals(g); };
+  const saveUserGoals = async (mutate) => { await mutate(); await refetch(); };
 
   if (!loaded) {
     return <div style={{ minHeight: "100vh", background: PAPER, display: "grid", placeItems: "center" }}>
@@ -147,6 +172,7 @@ export default function App() {
   const role = liveUser.role;
   const canLog = role === "bdr" || role === "sales";
   const isAdmin = role === "admin";
+  const canManageGoals = role === "admin" || role === "management";
 
   const visibleUserIds = (() => {
     if (role === "admin" || role === "management") return users.map((u) => u.id);
@@ -160,6 +186,7 @@ export default function App() {
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
+  if (canManageGoals) nav.push(["goals", "Goals", Target]);
   if (isAdmin) nav.push(["admin", "Admin Portal", Shield]);
 
   return (
@@ -206,7 +233,7 @@ export default function App() {
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
-            liveUser={liveUser} visibleUserIds={visibleUserIds} />
+            userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} />
         )}
         {view === "log" && canLog && (
           <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} />
@@ -215,6 +242,10 @@ export default function App() {
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
             liveUser={liveUser} users={users} visibleUserIds={visibleUserIds}
             entries={entries} saveEntries={saveEntries} />
+        )}
+        {view === "goals" && canManageGoals && (
+          <GoalsManager users={users} visibleUserIds={visibleUserIds} liveUser={liveUser}
+            goals={goals} saveGoals={saveGoals} userGoals={userGoals} saveUserGoals={saveUserGoals} />
         )}
         {view === "admin" && isAdmin && (
           <AdminPortal users={users} saveUsers={saveUsers} entries={entries} saveEntries={saveEntries} deals={deals} saveDeals={saveDeals} />
@@ -354,15 +385,22 @@ function Login({ onLogin }) {
   );
 }
 
-function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleUserIds }) {
+function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds }) {
   const role = liveUser.role;
   const scopeUsers = users.filter((u) => visibleUserIds.includes(u.id));
   const repUsers = scopeUsers.filter((u) => u.role === "bdr" || u.role === "sales");
 
   const [repFilter, setRepFilter] = useState("all");
+  const [month, setMonth] = useState(CURRENT_MONTH);
+  const monthOptions = buildMonthOptions();
+  const isCurrentMonth = month === CURRENT_MONTH;
 
-  const scoped = repFilter === "all" ? entries : entries.filter((e) => e.userId === repFilter);
-  const scopedDeals = repFilter === "all" ? deals : deals.filter((d) => d.ownerId === repFilter);
+  // Month-scope first: everything on the dashboard reflects the selected month.
+  const monthEntries = entries.filter((e) => inMonth(e.date, month));
+  const monthDeals = deals.filter((d) => inMonth(d.closeDate, month) || inMonth(d.createdAt, month));
+
+  const scoped = repFilter === "all" ? monthEntries : monthEntries.filter((e) => e.userId === repFilter);
+  const scopedDeals = repFilter === "all" ? monthDeals : monthDeals.filter((d) => d.ownerId === repFilter);
 
   // Pipeline rollups for the dashboard
   const openDeals = scopedDeals.filter((d) => d.stage !== "won" && d.stage !== "lost");
@@ -384,13 +422,16 @@ function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleU
   const emailConv = totals.emails ? ((totals.appts / totals.emails) * 100).toFixed(1) : "0.0";
 
   const trend = (() => {
+    const [y, m] = month.split("-").map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    // Current month: 1st → today. Past month: full 1st → last day.
+    const lastDay = isCurrentMonth ? new Date().getDate() : daysInMonth;
     const days = [];
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
+    for (let day = 1; day <= lastDay; day++) {
+      const key = `${month}-${String(day).padStart(2, "0")}`;
       const de = scoped.filter((e) => e.date === key);
       days.push({
-        date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        date: new Date(y, m - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         Calls: de.reduce((s, e) => s + (e.calls || 0), 0),
         Emails: de.reduce((s, e) => s + (e.emails || 0), 0),
         Appts: de.reduce((s, e) => s + (e.appts || 0), 0),
@@ -402,7 +443,7 @@ function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleU
   const leaderboard = (() => {
     const map = {};
     repUsers.forEach((u) => (map[u.id] = { rep: u.name, calls: 0, emails: 0, appts: 0 }));
-    entries.forEach((e) => {
+    monthEntries.forEach((e) => {
       if (!map[e.userId]) return;
       map[e.userId].calls += e.calls || 0;
       map[e.userId].emails += e.emails || 0;
@@ -416,8 +457,20 @@ function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleU
     : "All activity";
 
   const showLeaderboard = role !== "bdr";
-  const teamMult = repFilter === "all" ? Math.max(1, repUsers.length) : 1;
-  const targets = { calls: goals.calls * teamMult, emails: goals.emails * teamMult, appts: goals.appts * teamMult };
+  // Effective goal per rep = their override if set, else the team default.
+  const effGoal = (uid) => (userGoals && userGoals[uid]) ? userGoals[uid] : goals;
+  const targets = (() => {
+    if (repFilter !== "all") {
+      // Single rep selected: measure against that rep's own goal.
+      return { ...effGoal(repFilter) };
+    }
+    // "All in scope" (or a BDR viewing only themselves): sum each rep's effective goal.
+    return repUsers.reduce((acc, u) => {
+      const g = effGoal(u.id);
+      acc.calls += g.calls || 0; acc.emails += g.emails || 0; acc.appts += g.appts || 0;
+      return acc;
+    }, { calls: 0, emails: 0, appts: 0 });
+  })();
 
   return (
     <>
@@ -427,19 +480,47 @@ function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleU
             {role === "bdr" ? "My Dashboard" : "Team Performance"}
           </h1>
           <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
-            {scopeLabel} · {scoped.length} logged sessions
+            {scopeLabel} · {monthLabel(month)}{isCurrentMonth ? " (month-to-date)" : ""} · {scoped.length} logged sessions
           </p>
         </div>
-        {role !== "bdr" && repUsers.length > 0 && (
-          <div style={{ position: "relative" }}>
-            <select value={repFilter} onChange={(e) => setRepFilter(e.target.value)}
-              style={{ appearance: "none", background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "9px 34px 9px 14px", fontSize: 14, fontWeight: 500, color: INK, cursor: "pointer" }}>
-              <option value="all">All in scope</option>
-              {repUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 11, pointerEvents: "none", opacity: 0.5 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* Month picker: arrows + dropdown */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 3 }}>
+            <button
+              onClick={() => { const i = monthOptions.indexOf(month); if (i < monthOptions.length - 1) setMonth(monthOptions[i + 1]); }}
+              disabled={monthOptions.indexOf(month) >= monthOptions.length - 1}
+              className="tap" title="Previous month"
+              style={{ background: "transparent", border: "none", borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: INK, opacity: monthOptions.indexOf(month) >= monthOptions.length - 1 ? 0.3 : 1, display: "grid", placeItems: "center" }}>
+              <ChevronLeft size={16} />
+            </button>
+            <div style={{ position: "relative" }}>
+              <select value={month} onChange={(e) => setMonth(e.target.value)}
+                style={{ appearance: "none", background: "transparent", border: "none", padding: "4px 26px 4px 8px", fontSize: 14, fontWeight: 600, color: INK, cursor: "pointer", minWidth: 130, textAlign: "center" }}>
+                {monthOptions.map((mk) => (
+                  <option key={mk} value={mk}>{monthLabel(mk)}{mk === CURRENT_MONTH ? " (MTD)" : ""}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} style={{ position: "absolute", right: 8, top: 9, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+            <button
+              onClick={() => { const i = monthOptions.indexOf(month); if (i > 0) setMonth(monthOptions[i - 1]); }}
+              disabled={monthOptions.indexOf(month) <= 0}
+              className="tap" title="Next month"
+              style={{ background: "transparent", border: "none", borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: INK, opacity: monthOptions.indexOf(month) <= 0 ? 0.3 : 1, display: "grid", placeItems: "center" }}>
+              <ChevronRight size={16} />
+            </button>
           </div>
-        )}
+          {role !== "bdr" && repUsers.length > 0 && (
+            <div style={{ position: "relative" }}>
+              <select value={repFilter} onChange={(e) => setRepFilter(e.target.value)}
+                style={{ appearance: "none", background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "9px 34px 9px 14px", fontSize: 14, fontWeight: 500, color: INK, cursor: "pointer" }}>
+                <option value="all">All in scope</option>
+                {repUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 11, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
@@ -449,15 +530,14 @@ function Dashboard({ entries, deals, users, goals, saveGoals, liveUser, visibleU
         <StatCard icon={TrendingUp} color={INK} label="Total Outreach" value={outreach} sub={`${scoped.length ? (outreach / scoped.length).toFixed(0) : 0} avg/session`} />
       </div>
 
-      <GoalBars totals={totals} goals={goals} saveGoals={saveGoals} targets={targets}
-        canEdit={role === "admin" || role === "management"} isTeam={repFilter === "all"} />
+      <GoalBars totals={totals} targets={targets} isTeam={repFilter === "all" && role !== "bdr"} />
 
       <div className="charts" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, marginTop: 16 }}>
-        <Panel title="Activity — last 14 days">
+        <Panel title={`Activity — ${monthLabel(month)}${isCurrentMonth ? " (MTD)" : ""}`}>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={trend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={LINE_C} vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: INK }} interval={1} axisLine={{ stroke: LINE_C }} tickLine={false} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: INK }} interval={trend.length > 16 ? 2 : 1} axisLine={{ stroke: LINE_C }} tickLine={false} />
               <YAxis tick={{ fontSize: 11, fill: INK }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={{ borderRadius: 10, border: `1px solid ${LINE_C}`, fontSize: 13 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
@@ -563,9 +643,141 @@ function StatCard({ icon: Icon, color, label, value, sub, raw }) {
   );
 }
 
-function GoalBars({ totals, goals, saveGoals, targets, canEdit, isTeam }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(goals);
+function GoalsManager({ users, visibleUserIds, liveUser, goals, saveGoals, userGoals, saveUserGoals }) {
+  const [draftDefault, setDraftDefault] = useState(goals);
+  const [editingDefault, setEditingDefault] = useState(false);
+  const [editRow, setEditRow] = useState(null); // userId being edited
+  const [rowDraft, setRowDraft] = useState({ calls: 0, emails: 0, appts: 0 });
+  const [savingMsg, setSavingMsg] = useState("");
+
+  // Reps this manager/admin can set goals for = those in their scope who log activity.
+  const reps = users.filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales"));
+
+  const effGoal = (uid) => userGoals[uid] || goals;
+  const hasOverride = (uid) => !!userGoals[uid];
+
+  const startEditRow = (u) => { setEditRow(u.id); setRowDraft({ ...effGoal(u.id) }); };
+
+  const saveRow = async (uid) => {
+    setSavingMsg("Saving…");
+    await saveUserGoals(() => api.setUserGoal(uid, {
+      calls: +rowDraft.calls || 0, emails: +rowDraft.emails || 0, appts: +rowDraft.appts || 0,
+    }));
+    setEditRow(null); setSavingMsg("");
+  };
+  const resetRow = async (uid) => {
+    if (!confirm("Reset this person to the team default goal?")) return;
+    setSavingMsg("Resetting…");
+    await saveUserGoals(() => api.clearUserGoal(uid));
+    setSavingMsg("");
+  };
+  const saveDefault = async () => {
+    await saveGoals({ calls: +draftDefault.calls || 0, emails: +draftDefault.emails || 0, appts: +draftDefault.appts || 0 });
+    setEditingDefault(false);
+  };
+
+  const num = (v, on) => (
+    <input type="number" min="0" value={v} onChange={on}
+      style={{ width: 82, padding: "8px 10px", border: `1px solid ${LINE_C}`, borderRadius: 8, fontSize: 14 }} />
+  );
+
+  return (
+    <>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Goals</h1>
+        <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
+          Set the team default and give individual reps their own monthly targets. {savingMsg && <b style={{ color: CALL }}>{savingMsg}</b>}
+        </p>
+      </div>
+
+      {/* Team default */}
+      <Panel title="Team default (monthly)" icon={Target} style={{ marginBottom: 16 }}>
+        {editingDefault ? (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+            {["calls", "emails", "appts"].map((k) => (
+              <label key={k} style={{ fontSize: 12, fontWeight: 500, opacity: 0.7 }}>
+                <div style={{ marginBottom: 4, textTransform: "capitalize" }}>{k}/mo</div>
+                {num(draftDefault[k], (e) => setDraftDefault({ ...draftDefault, [k]: e.target.value }))}
+              </label>
+            ))}
+            <button onClick={saveDefault} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>Save</button>
+            <button onClick={() => setEditingDefault(false)} className="tap" style={{ background: "transparent", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "9px 14px", fontSize: 14, cursor: "pointer" }}>Cancel</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+            <GoalStat label="Calls" value={goals.calls} color={CALL} />
+            <GoalStat label="Emails" value={goals.emails} color={EMAIL} />
+            <GoalStat label="Appointments" value={goals.appts} color={APPT} />
+            <button onClick={() => { setDraftDefault(goals); setEditingDefault(true); }} className="tap"
+              style={{ marginLeft: "auto", background: "transparent", border: "none", color: EMAIL, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Edit default</button>
+          </div>
+        )}
+        <p style={{ fontSize: 12.5, opacity: 0.5, margin: "12px 0 0" }}>Anyone without a custom goal below uses these targets.</p>
+      </Panel>
+
+      {/* Per-person goals */}
+      <Panel title="Individual goals" icon={Users}>
+        {reps.length === 0 ? (
+          <Empty msg="No reps in your scope yet." />
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.6fr repeat(3, 1fr) auto", gap: 12, padding: "0 4px 6px", fontSize: 11.5, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: "#8494A6" }}>
+              <span>Rep</span><span>Calls</span><span>Emails</span><span>Appts</span><span></span>
+            </div>
+            {reps.map((u) => {
+              const g = effGoal(u.id);
+              const editing = editRow === u.id;
+              return (
+                <div key={u.id} style={{ display: "grid", gridTemplateColumns: "1.6fr repeat(3, 1fr) auto", gap: 12, alignItems: "center", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 11, padding: "12px 14px" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{u.name}</div>
+                    <div style={{ fontSize: 12, opacity: 0.5 }}>
+                      {ROLES[u.role].label}{hasOverride(u.id) ? " · custom goal" : " · default"}
+                    </div>
+                  </div>
+                  {editing ? (
+                    <>
+                      {num(rowDraft.calls, (e) => setRowDraft({ ...rowDraft, calls: e.target.value }))}
+                      {num(rowDraft.emails, (e) => setRowDraft({ ...rowDraft, emails: e.target.value }))}
+                      {num(rowDraft.appts, (e) => setRowDraft({ ...rowDraft, appts: e.target.value }))}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => saveRow(u.id)} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Save</button>
+                        <button onClick={() => setEditRow(null)} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "8px 10px", fontSize: 13, cursor: "pointer" }}>Cancel</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 14, fontWeight: hasOverride(u.id) ? 600 : 400, opacity: hasOverride(u.id) ? 1 : 0.6 }}>{g.calls.toLocaleString()}</span>
+                      <span style={{ fontSize: 14, fontWeight: hasOverride(u.id) ? 600 : 400, opacity: hasOverride(u.id) ? 1 : 0.6 }}>{g.emails.toLocaleString()}</span>
+                      <span style={{ fontSize: 14, fontWeight: hasOverride(u.id) ? 600 : 400, opacity: hasOverride(u.id) ? 1 : 0.6 }}>{g.appts.toLocaleString()}</span>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button onClick={() => startEditRow(u)} className="tap" style={iconBtn} title="Set custom goal"><Pencil size={14} /></button>
+                        {hasOverride(u.id) && (
+                          <button onClick={() => resetRow(u.id)} className="tap" style={iconBtn} title="Reset to default"><X size={14} /></button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function GoalStat({ label, value, color }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12, fontWeight: 500, opacity: 0.6, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 600, color }}>{value.toLocaleString()}</div>
+    </div>
+  );
+}
+
+function GoalBars({ totals, targets, isTeam }) {
   const rows = [
     ["Calls", totals.calls, targets.calls, CALL],
     ["Emails", totals.emails, targets.emails, EMAIL],
@@ -576,45 +788,25 @@ function GoalBars({ totals, goals, saveGoals, targets, canEdit, isTeam }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Target size={16} color={INK} />
-          <span style={{ fontSize: 14, fontWeight: 600 }}>{isTeam ? "Team weekly goals" : "Weekly goals"}</span>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{isTeam ? "Team monthly goals" : "Monthly goals"}</span>
         </div>
-        {canEdit && (
-          <button onClick={() => { setDraft(goals); setEditing(!editing); }} className="tap"
-            style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
-            {editing ? "Cancel" : "Edit goals"}
-          </button>
-        )}
       </div>
-      {editing ? (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-          {["calls", "emails", "appts"].map((k) => (
-            <label key={k} style={{ fontSize: 12, fontWeight: 500, opacity: 0.7 }}>
-              <div style={{ marginBottom: 4, textTransform: "capitalize" }}>{k}/rep/wk</div>
-              <input type="number" value={draft[k]} onChange={(e) => setDraft({ ...draft, [k]: +e.target.value })}
-                style={{ width: 90, padding: "8px 10px", border: `1px solid ${LINE_C}`, borderRadius: 8, fontSize: 14 }} />
-            </label>
-          ))}
-          <button onClick={() => { saveGoals(draft); setEditing(false); }} className="tap"
-            style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>Save</button>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {rows.map(([label, val, target, color]) => {
-            const pct = Math.min(100, target ? (val / target) * 100 : 0);
-            return (
-              <div key={label}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
-                  <span style={{ fontWeight: 500 }}>{label}</span>
-                  <span style={{ opacity: 0.6 }}>{val.toLocaleString()} / {target.toLocaleString()}</span>
-                </div>
-                <div style={{ height: 8, background: LINE_C, borderRadius: 99, overflow: "hidden" }}>
-                  <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
-                </div>
+      <div style={{ display: "grid", gap: 12 }}>
+        {rows.map(([label, val, target, color]) => {
+          const pct = Math.min(100, target ? (val / target) * 100 : 0);
+          return (
+            <div key={label}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
+                <span style={{ fontWeight: 500 }}>{label}</span>
+                <span style={{ opacity: 0.6 }}>{val.toLocaleString()} / {target.toLocaleString()}</span>
               </div>
-            );
-          })}
-        </div>
-      )}
+              <div style={{ height: 8, background: LINE_C, borderRadius: 99, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
