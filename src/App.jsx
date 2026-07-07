@@ -116,6 +116,7 @@ export default function App() {
   const [goals, setGoals] = useState(DEFAULT_GOALS);
   const [userGoals, setUserGoals] = useState({});   // per-person overrides { userId: {calls,emails,appts} }
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
+  const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const [view, setView] = useState("dashboard");
   const [loaded, setLoaded] = useState(false);       // finished checking session
   const [authed, setAuthed] = useState(false);       // has a valid session
@@ -173,7 +174,13 @@ export default function App() {
 
   if (!authed || !liveUser) return <Login onLogin={login} />;
 
-  const role = liveUser.role;
+  const realIsAdmin = liveUser.role === "admin";
+  // When an admin uses "View as", the app renders as that person. Their real
+  // identity stays in liveUser (for the banner + exit); everything else uses effectiveUser.
+  const impersonating = realIsAdmin && viewAsId && users.some((u) => u.id === viewAsId);
+  const effectiveUser = impersonating ? users.find((u) => u.id === viewAsId) : liveUser;
+
+  const role = effectiveUser.role;
   const canLog = true; // everyone can log activity (BDRs still tag "working for")
   const isAdmin = role === "admin";
   const canManageGoals = role === "admin" || role === "management";
@@ -185,22 +192,22 @@ export default function App() {
     if (role === "admin" || role === "management") return users.map((u) => u.id);
     if (role === "sales") {
       // themselves + any BDR who has tagged them on an entry or deal
-      const taggedBy = new Set([liveUser.id]);
-      entries.forEach((e) => { if (e.taggedRepId === liveUser.id) taggedBy.add(e.userId); });
-      deals.forEach((d) => { if (d.taggedRepId === liveUser.id) taggedBy.add(d.ownerId); });
+      const taggedBy = new Set([effectiveUser.id]);
+      entries.forEach((e) => { if (e.taggedRepId === effectiveUser.id) taggedBy.add(e.userId); });
+      deals.forEach((d) => { if (d.taggedRepId === effectiveUser.id) taggedBy.add(d.ownerId); });
       return [...taggedBy];
     }
-    return [liveUser.id];
+    return [effectiveUser.id];
   })();
 
   // Row-level visibility: own rows, or (for a sales rep) rows tagged to them.
   // Admin/management see everything. This mirrors the server-side RLS.
   const canSeeEntry = (e) =>
     role === "admin" || role === "management" ||
-    e.userId === liveUser.id || e.taggedRepId === liveUser.id;
+    e.userId === effectiveUser.id || e.taggedRepId === effectiveUser.id;
   const canSeeDeal = (d) =>
     role === "admin" || role === "management" ||
-    d.ownerId === liveUser.id || d.taggedRepId === liveUser.id;
+    d.ownerId === effectiveUser.id || d.taggedRepId === effectiveUser.id;
 
   const visibleEntries = entries.filter(canSeeEntry);
   const visibleDeals = deals.filter(canSeeDeal);
@@ -247,9 +254,28 @@ export default function App() {
               ))}
             </nav>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {realIsAdmin && (
+                <div style={{ position: "relative" }}>
+                  <select value={viewAsId} onChange={(e) => { setViewAsId(e.target.value); setView("dashboard"); }}
+                    title="View the app as another role/person"
+                    style={{ appearance: "none", background: impersonating ? CYAN : "rgba(255,255,255,.12)", color: impersonating ? INK : PAPER, border: impersonating ? "none" : "1px solid rgba(255,255,255,.25)", borderRadius: 8, padding: "8px 30px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    <option value="">View as… (Admin)</option>
+                    {["management", "sales", "bdr"].map((r) => {
+                      const group = users.filter((u) => u.role === r).sort((a, b) => a.name.localeCompare(b.name));
+                      if (group.length === 0) return null;
+                      return (
+                        <optgroup key={r} label={ROLES[r].label}>
+                          {group.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </optgroup>
+                      );
+                    })}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 10, pointerEvents: "none", color: impersonating ? INK : PAPER, opacity: 0.7 }} />
+                </div>
+              )}
               <div style={{ textAlign: "right", lineHeight: 1.3 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>{liveUser.name}</div>
-                <div style={{ fontSize: 11, opacity: 0.6 }}>{ROLES[role].label}</div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{impersonating ? effectiveUser.name : liveUser.name}</div>
+                <div style={{ fontSize: 11, opacity: 0.6 }}>{ROLES[role].label}{impersonating ? " · viewing" : ""}</div>
               </div>
               <button onClick={logout} className="tap" title="Sign out"
                 style={{ background: "rgba(255,255,255,.1)", border: "none", borderRadius: 8, padding: 8, color: PAPER, cursor: "pointer" }}>
@@ -260,17 +286,30 @@ export default function App() {
         </div>
       </header>
 
+      {impersonating && (
+        <div style={{ background: CYAN, color: INK, padding: "10px 24px" }}>
+          <div style={{ maxWidth: 1120, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+              <Eye size={16} /> Viewing as <b>{effectiveUser.name}</b> ({ROLES[effectiveUser.role].label}) — this is a preview of what they see. Changes you make are still made as {liveUser.name}.
+            </div>
+            <button onClick={() => { setViewAsId(""); setView("dashboard"); }} className="tap"
+              style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>
+              Exit preview
+            </button>
+          </div>
+        </div>
+      )}
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
-            userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog} />
+            userGoals={userGoals} liveUser={effectiveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog} />
         )}
         {view === "log" && canLog && (
-          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} visibleUserIds={visibleUserIds} />
+          <LogView liveUser={effectiveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} visibleUserIds={visibleUserIds} />
         )}
         {view === "pipeline" && (
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
-            liveUser={liveUser} users={users} visibleUserIds={visibleUserIds}
+            liveUser={effectiveUser} users={users} visibleUserIds={visibleUserIds}
             entries={entries} saveEntries={saveEntries} />
         )}
         {view === "activity" && (
@@ -281,11 +320,11 @@ export default function App() {
                 Every activity record in your scope. Click a column to sort, or export to Excel.
               </p>
             </div>
-            <ActivityTable entries={visibleEntries} users={users} liveUser={liveUser} />
+            <ActivityTable entries={visibleEntries} users={users} liveUser={effectiveUser} />
           </>
         )}
         {view === "goals" && canManageGoals && (
-          <GoalsManager users={users} visibleUserIds={visibleUserIds} liveUser={liveUser}
+          <GoalsManager users={users} visibleUserIds={visibleUserIds} liveUser={effectiveUser}
             goals={goals} saveGoals={saveGoals} userGoals={userGoals} saveUserGoals={saveUserGoals} />
         )}
         {view === "admin" && isAdmin && (
