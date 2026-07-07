@@ -136,3 +136,27 @@ export async function saveGoals(patch) {
   const { error } = await supabase.from("goals").update(patch).eq("id", 1);
   if (error) throw error;
 }
+
+// ---- Per-person goal overrides ----
+// Returns a map { userId: {calls, emails, appts} } of everyone with a custom goal.
+export async function listUserGoals() {
+  const { data, error } = await supabase.from("user_goals").select("*");
+  if (error) throw error;
+  const map = {};
+  (data || []).forEach((g) => { map[g.user_id] = { calls: g.calls, emails: g.emails, appts: g.appts }; });
+  return map;
+}
+
+// Set (create or update) an individual's goal override.
+export async function setUserGoal(userId, goal) {
+  const { error } = await supabase.from("user_goals").upsert({
+    user_id: userId, calls: goal.calls, emails: goal.emails, appts: goal.appts, updated_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+}
+
+// Remove an override so the person falls back to the team default.
+export async function clearUserGoal(userId) {
+  const { error } = await supabase.from("user_goals").delete().eq("user_id", userId);
+  if (error) throw error;
+}
