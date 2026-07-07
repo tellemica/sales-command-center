@@ -220,7 +220,7 @@ export default function App() {
   if (isAdmin) nav.push(["admin", "Admin Portal", Shield]);
 
   return (
-    <div style={{ minHeight: "100vh", background: PAPER, fontFamily: "'Inter', system-ui, sans-serif", color: INK }}>
+    <div style={{ minHeight: "100vh", background: PAPER, fontFamily: "'Inter', system-ui, sans-serif", color: INK, overflowX: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap');
         * { box-sizing: border-box; }
@@ -235,30 +235,38 @@ export default function App() {
         @media (max-width: 720px){ .fab-add{ right: 16px !important; bottom: 16px !important; padding: 14px 20px !important; } }
         input, select, textarea { font-family: inherit; }
         @media (max-width: 720px){ .grid-4{grid-template-columns:1fr 1fr!important} .charts{grid-template-columns:1fr!important} .logwrap{grid-template-columns:1fr!important} }
+        @media (max-width: 720px){
+          .hdr-row{ flex-direction: column !important; align-items: stretch !important; gap: 10px !important; }
+          .hdr-right{ width: 100%; justify-content: flex-start !important; gap: 10px !important; }
+          .hdr-nav{ width: 100%; justify-content: flex-start; }
+          .hdr-nav button{ padding: 7px 10px !important; font-size: 12.5px !important; }
+          .hdr-user{ width: 100%; justify-content: space-between !important; }
+          header{ padding: 12px 16px !important; }
+        }
       `}</style>
 
       <header style={{ background: `linear-gradient(100deg, ${INK}, ${NAVY2})`, color: PAPER, padding: "16px 24px", borderBottom: `3px solid ${CYAN}` }}>
-        <div style={{ maxWidth: 1120, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div className="hdr-row" style={{ maxWidth: 1120, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <TellemicaLogo height={19} light wordmark />
             <span style={{ fontSize: 12, opacity: 0.7, letterSpacing: 1, textTransform: "uppercase", borderLeft: "1px solid rgba(255,255,255,.25)", paddingLeft: 14 }}>Command Center</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <nav style={{ display: "flex", gap: 6, background: "rgba(255,255,255,.08)", padding: 4, borderRadius: 10 }}>
+          <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", minWidth: 0, maxWidth: "100%" }}>
+            <nav className="hdr-nav" style={{ display: "flex", flexWrap: "wrap", gap: 6, background: "rgba(255,255,255,.08)", padding: 4, borderRadius: 10, maxWidth: "100%" }}>
               {nav.map(([id, label, Icon]) => (
                 <button key={id} onClick={() => setView(id)} className="tap"
-                  style={{ display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13.5, fontWeight: 500,
+                  style={{ display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13.5, fontWeight: 500, whiteSpace: "nowrap",
                     background: view === id ? PAPER : "transparent", color: view === id ? INK : PAPER }}>
                   <Icon size={15} /> {label}
                 </button>
               ))}
             </nav>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="hdr-user" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0 }}>
               {realIsAdmin && (
                 <div style={{ position: "relative" }}>
                   <select value={viewAsId} onChange={(e) => { setViewAsId(e.target.value); setView("dashboard"); }}
                     title="View the app as another role/person"
-                    style={{ appearance: "none", background: impersonating ? CYAN : "rgba(255,255,255,.12)", color: impersonating ? INK : PAPER, border: impersonating ? "none" : "1px solid rgba(255,255,255,.25)", borderRadius: 8, padding: "8px 30px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    style={{ appearance: "none", background: impersonating ? CYAN : "rgba(255,255,255,.12)", color: impersonating ? INK : PAPER, border: impersonating ? "none" : "1px solid rgba(255,255,255,.25)", borderRadius: 8, padding: "8px 30px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", maxWidth: "100%", textOverflow: "ellipsis" }}>
                     <option value="">View as… (Admin)</option>
                     {["management", "sales", "bdr"].map((r) => {
                       const group = users.filter((u) => u.role === r).sort((a, b) => a.name.localeCompare(b.name));
