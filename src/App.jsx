@@ -1019,7 +1019,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
     const N = 2000; // rows the dropdowns cover
     const example = {
       Date: TODAY_US(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
-      Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 1, Emails: 1, Appointments: 1,
+      Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 0, Emails: 0, Appointments: 0,
       "Prospecting For": "Self-generated", "BDR/Sale Rep [You]": liveUser.name, Notes: "Intro call, follow up next week",
     };
     const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
