@@ -171,7 +171,7 @@ export default function App() {
   if (!authed || !liveUser) return <Login onLogin={login} />;
 
   const role = liveUser.role;
-  const canLog = role === "bdr" || role === "sales";
+  const canLog = true; // everyone can log activity (BDRs still tag "working for")
   const isAdmin = role === "admin";
   const canManageGoals = role === "admin" || role === "management";
 
@@ -216,6 +216,12 @@ export default function App() {
         * { box-sizing: border-box; }
         .tap { cursor: pointer; transition: all .15s ease; }
         .tap:hover { transform: translateY(-1px); }
+        @keyframes addPulse {
+          0%, 100% { box-shadow: 0 6px 20px rgba(15,150,220,.40), 0 0 0 1px rgba(255,255,255,.12) inset; }
+          50% { box-shadow: 0 8px 28px rgba(15,150,220,.70), 0 0 0 1px rgba(255,255,255,.18) inset; }
+        }
+        .addactivity-btn { animation: addPulse 2.4s ease-in-out infinite; }
+        .addactivity-btn:hover { transform: translateY(-2px) scale(1.02); animation: none; box-shadow: 0 10px 30px rgba(15,150,220,.75); }
         input, select, textarea { font-family: inherit; }
         @media (max-width: 720px){ .grid-4{grid-template-columns:1fr 1fr!important} .charts{grid-template-columns:1fr!important} .logwrap{grid-template-columns:1fr!important} }
       `}</style>
@@ -665,9 +671,9 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
             </div>
           )}
           {canLog && (
-            <button onClick={() => setView("log")} className="tap"
-              style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 8px rgba(24,84,187,.25)" }}>
-              <Plus size={16} /> Add Activity
+            <button onClick={() => setView("log")} className="tap addactivity-btn"
+              style={{ display: "flex", alignItems: "center", gap: 8, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 11, padding: "12px 22px", fontSize: 15, fontWeight: 700, letterSpacing: 0.2, cursor: "pointer", boxShadow: `0 6px 20px rgba(15,150,220,.45), 0 0 0 1px rgba(255,255,255,.12) inset` }}>
+              <Plus size={18} strokeWidth={2.6} /> Add Activity
             </button>
           )}
         </div>
