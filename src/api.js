@@ -94,6 +94,14 @@ export async function addEntry(entry) {
   return toCamelEntry(data);
 }
 
+// Insert many entries at once (used by bulk upload). Returns the created rows.
+export async function addEntriesBulk(entries) {
+  const rows = entries.map(fromCamelEntry);
+  const { data, error } = await supabase.from("entries").insert(rows).select();
+  if (error) throw error;
+  return (data || []).map(toCamelEntry);
+}
+
 export async function deleteEntry(id) {
   const { error } = await supabase.from("entries").delete().eq("id", id);
   if (error) throw error;
