@@ -263,7 +263,7 @@ export default function App() {
             userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog} />
         )}
         {view === "log" && canLog && (
-          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} />
+          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} visibleUserIds={visibleUserIds} />
         )}
         {view === "pipeline" && (
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
@@ -996,7 +996,209 @@ function Funnel({ calls, emails, appts }) {
   );
 }
 
-function LogView({ liveUser, entries, saveEntries, users, allEntries }) {
+// Bulk upload activity from an Excel file: download template, parse, validate, preview, insert.
+function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
+  const role = liveUser.role;
+  const isPrivileged = role === "admin" || role === "management";
+  const salesReps = (users || []).filter((u) => u.role === "sales");
+  // People this uploader may attribute rows to (Rep/Owner column). Everyone can log as themselves.
+  const assignable = (users || []).filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales" || u.id === liveUser.id));
+
+  const [rows, setRows] = useState(null);     // validated preview rows
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+  const fileRef = React.useRef(null);
+
+  const TEMPLATE_COLS = ["Date", "Company", "BAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Working For", "Rep/Owner", "Notes"];
+
+  const downloadTemplate = () => {
+    const example = {
+      Date: TODAY(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
+      Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 12, Emails: 4, Appointments: 1,
+      "Working For": "Self-generated", "Rep/Owner": liveUser.name, Notes: "Intro call, follow up next week",
+    };
+    const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
+    const ws = XLSX.utils.json_to_sheet([example, blank], { header: TEMPLATE_COLS });
+    ws["!cols"] = [{ wch: 11 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
+    // Reference sheet listing valid Sales Rep names for the "Working For" column, and assignable people.
+    const ref = [
+      { Column: "Working For", "Accepted values": "Self-generated" },
+      ...salesReps.map((s) => ({ Column: "Working For", "Accepted values": s.name })),
+      ...assignable.map((u) => ({ Column: "Rep/Owner", "Accepted values": `${u.name} (${ROLES[u.role].label})` })),
+    ];
+    const wsRef = XLSX.utils.json_to_sheet(ref);
+    wsRef["!cols"] = [{ wch: 16 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Activity");
+    XLSX.utils.book_append_sheet(wb, wsRef, "Reference");
+    XLSX.writeFile(wb, "tellemica-activity-template.xlsx");
+  };
+
+  // Match a typed name to a user in a candidate list (case-insensitive, trimmed).
+  const matchUser = (name, list) => {
+    const n = (name || "").trim().toLowerCase();
+    if (!n) return null;
+    return list.find((u) => u.name.trim().toLowerCase() === n) || null;
+  };
+
+  const onFile = async (file) => {
+    setDone(""); setRows(null); setFileName(file.name);
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
+    const parsed = raw.map((r, idx) => {
+      const errors = [];
+      const company = String(r["Company"] || "").trim();
+      if (!company) errors.push("Company is required");
+
+      // Date: accept blank (default today) or a parseable date.
+      let date = String(r["Date"] || "").trim();
+      if (!date) date = TODAY();
+      else {
+        const d = new Date(date);
+        if (isNaN(d.getTime())) errors.push(`Unrecognized date "${date}"`);
+        else date = d.toISOString().slice(0, 10);
+      }
+
+      const numOf = (v) => { const n = parseInt(String(v).replace(/[^0-9-]/g, ""), 10); return isNaN(n) ? 0 : Math.max(0, n); };
+      const calls = numOf(r["Calls"]); const emails = numOf(r["Emails"]); const appts = numOf(r["Appointments"]);
+
+      // Working For -> tagged_rep_id (a sales rep) or null for self-generated.
+      let taggedRepId = null;
+      const wf = String(r["Working For"] || "").trim();
+      if (wf && wf.toLowerCase() !== "self-generated" && wf.toLowerCase() !== "self") {
+        const rep = matchUser(wf, salesReps);
+        if (!rep) errors.push(`"Working For" — no Sales Rep named "${wf}"`);
+        else taggedRepId = rep.id;
+      }
+
+      // Rep/Owner -> whose activity this row is. Default = uploader.
+      let userId = liveUser.id;
+      const owner = String(r["Rep/Owner"] || "").trim();
+      if (owner) {
+        const u = matchUser(owner, assignable);
+        if (!u) errors.push(`"Rep/Owner" — "${owner}" isn't someone you can assign`);
+        else if (u.id !== liveUser.id && !isPrivileged) errors.push(`Only managers/admins can assign rows to others`);
+        else userId = u.id;
+      }
+
+      return {
+        _row: idx + 2, // account for header row (Excel row number)
+        errors,
+        userId, taggedRepId, date, company,
+        ban: String(r["BAN"] || "").trim(), contact: String(r["Contact"] || "").trim(),
+        phone: String(r["Phone"] || "").trim(), email: String(r["Email"] || "").trim(),
+        calls, emails, appts, notes: String(r["Notes"] || "").trim(),
+        ownerName: (assignable.find((u) => u.id === userId) || {}).name || liveUser.name,
+        repName: taggedRepId ? (salesReps.find((s) => s.id === taggedRepId) || {}).name : "Self-generated",
+      };
+    }).filter((r) => r.company || r.errors.length); // drop fully-empty rows
+    setRows(parsed);
+  };
+
+  const valid = (rows || []).filter((r) => r.errors.length === 0);
+  const invalid = (rows || []).filter((r) => r.errors.length > 0);
+
+  const doImport = async () => {
+    if (valid.length === 0) return;
+    setBusy(true);
+    try {
+      await saveEntries(() => api.addEntriesBulk(valid.map((r) => ({
+        userId: r.userId, date: r.date, company: r.company, ban: r.ban, contact: r.contact,
+        phone: r.phone, email: r.email, calls: r.calls, emails: r.emails, appts: r.appts,
+        notes: r.notes, taggedRepId: r.taggedRepId,
+      }))));
+      setDone(`Imported ${valid.length} ${valid.length === 1 ? "record" : "records"}.`);
+      setRows(null); setFileName("");
+      if (fileRef.current) fileRef.current.value = "";
+    } catch (e) {
+      setDone("Import failed: " + (e.message || "unknown error"));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <FileSpreadsheet size={18} color={INK} />
+        <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 }}>Bulk upload</h2>
+      </div>
+      <p style={{ margin: "0 0 16px", fontSize: 13.5, opacity: 0.6, lineHeight: 1.5 }}>
+        Download the template, fill in one row per activity, then upload it. Every row is checked before anything is saved.
+      </p>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <button onClick={downloadTemplate} className="tap"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          <Download size={15} /> Download template
+        </button>
+        <button onClick={() => fileRef.current && fileRef.current.click()} className="tap"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          <FileSpreadsheet size={15} /> Choose Excel file
+        </button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }} />
+      </div>
+      {fileName && <div style={{ fontSize: 12.5, opacity: 0.6, marginBottom: 8 }}>Loaded: <b>{fileName}</b></div>}
+      {done && <div style={{ marginTop: 10, background: CALL + "18", color: CALL, borderRadius: 8, padding: "10px 12px", fontSize: 13.5, fontWeight: 500 }}>{done}</div>}
+
+      {rows && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 12 }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{valid.length} ready</span>
+            {invalid.length > 0 && <span style={{ fontSize: 14, fontWeight: 600, color: "#B4453F" }}>{invalid.length} with issues</span>}
+            <button onClick={doImport} disabled={busy || valid.length === 0} className="tap"
+              style={{ marginLeft: "auto", background: valid.length && !busy ? INK : LINE_C, color: valid.length && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: valid.length && !busy ? "pointer" : "default" }}>
+              {busy ? "Importing…" : `Import ${valid.length} ${valid.length === 1 ? "row" : "rows"}`}
+            </button>
+          </div>
+
+          {invalid.length > 0 && (
+            <div style={{ background: "#FBECEB", border: "1px solid #E6C9C7", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#B4453F", marginBottom: 6 }}>These rows won't be imported until fixed:</div>
+              {invalid.slice(0, 8).map((r) => (
+                <div key={r._row} style={{ fontSize: 12.5, color: "#8A3B36", marginBottom: 3 }}>
+                  Row {r._row}{r.company ? ` (${r.company})` : ""}: {r.errors.join("; ")}
+                </div>
+              ))}
+              {invalid.length > 8 && <div style={{ fontSize: 12.5, color: "#8A3B36", marginTop: 4 }}>…and {invalid.length - 8} more.</div>}
+            </div>
+          )}
+
+          <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 760 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  {["", "Date", "Company", "Calls", "Emails", "Appts", "Working for", "Owner"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 50).map((r) => (
+                  <tr key={r._row} style={{ borderTop: `1px solid ${LINE_C}`, background: r.errors.length ? "#FDF4F3" : "transparent" }}>
+                    <td style={{ padding: "7px 10px" }}>{r.errors.length ? <X size={14} color="#B4453F" /> : <CheckCircle2 size={14} color="#189B72" />}</td>
+                    <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>{r.date}</td>
+                    <td style={{ padding: "7px 10px", fontWeight: 600 }}>{r.company || "—"}</td>
+                    <td style={{ padding: "7px 10px" }}>{r.calls}</td>
+                    <td style={{ padding: "7px 10px" }}>{r.emails}</td>
+                    <td style={{ padding: "7px 10px" }}>{r.appts}</td>
+                    <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>{r.repName}</td>
+                    <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>{r.ownerName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {rows.length > 50 && <div style={{ fontSize: 12, opacity: 0.5, marginTop: 6 }}>Showing first 50 of {rows.length} rows.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUserIds }) {
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
@@ -1048,6 +1250,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries }) {
   const repName = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : null; };
 
   return (
+    <>
     <div className="logwrap" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.2fr)", gap: 20, alignItems: "start" }}>
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 22 }}>
         <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "0 0 4px" }}>Log a session</h2>
@@ -1129,6 +1332,10 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries }) {
         )}
       </div>
     </div>
+    <div style={{ marginTop: 20 }}>
+      <BulkUpload liveUser={liveUser} users={users} saveEntries={saveEntries} visibleUserIds={visibleUserIds} />
+    </div>
+    </>
   );
 }
 
