@@ -1,15 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
-// These come from your Vercel environment variables (see DEPLOY_GUIDE.md).
-// Vite exposes vars prefixed with VITE_ to the browser.
-const url = import.meta.env.VITE_SUPABASE_URL;
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Browser uses the PUBLISHABLE key (safe to expose; protected by RLS).
+// Values fall back to hardcoded constants so the app works even if the
+// Vercel environment variables are not injected at build time.
+const FALLBACK_URL = "https://tgeoetccxosekvdvczyc.supabase.co";
+const FALLBACK_KEY = "sb_publishable__gKfKtHO8hwbBeTKIb7KIw_AJ2EDcCx";
 
-if (!url || !anonKey) {
-  // Helpful console message if env vars aren't set yet.
-  console.error(
-    "Missing Supabase env vars. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
-  );
-}
+const url = import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL;
+const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || FALLBACK_KEY;
 
-export const supabase = createClient(url, anonKey);
+export const supabase = createClient(url, publishableKey);
