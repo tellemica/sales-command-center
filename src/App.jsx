@@ -174,14 +174,32 @@ export default function App() {
   const isAdmin = role === "admin";
   const canManageGoals = role === "admin" || role === "management";
 
+  // Which PEOPLE this user can see (drives rep pickers, leaderboard rows, etc).
+  // Note: a Sales Rep's data visibility is per-row (own + tagged to them), handled
+  // below — but for building rep lists we include reps who have tagged them.
   const visibleUserIds = (() => {
     if (role === "admin" || role === "management") return users.map((u) => u.id);
-    if (role === "sales") return [liveUser.id, ...users.filter((u) => u.managerId === liveUser.id).map((u) => u.id)];
+    if (role === "sales") {
+      // themselves + any BDR who has tagged them on an entry or deal
+      const taggedBy = new Set([liveUser.id]);
+      entries.forEach((e) => { if (e.taggedRepId === liveUser.id) taggedBy.add(e.userId); });
+      deals.forEach((d) => { if (d.taggedRepId === liveUser.id) taggedBy.add(d.ownerId); });
+      return [...taggedBy];
+    }
     return [liveUser.id];
   })();
 
-  const visibleEntries = entries.filter((e) => visibleUserIds.includes(e.userId));
-  const visibleDeals = deals.filter((d) => visibleUserIds.includes(d.ownerId));
+  // Row-level visibility: own rows, or (for a sales rep) rows tagged to them.
+  // Admin/management see everything. This mirrors the server-side RLS.
+  const canSeeEntry = (e) =>
+    role === "admin" || role === "management" ||
+    e.userId === liveUser.id || e.taggedRepId === liveUser.id;
+  const canSeeDeal = (d) =>
+    role === "admin" || role === "management" ||
+    d.ownerId === liveUser.id || d.taggedRepId === liveUser.id;
+
+  const visibleEntries = entries.filter(canSeeEntry);
+  const visibleDeals = deals.filter(canSeeDeal);
 
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
@@ -236,7 +254,7 @@ export default function App() {
             userGoals={userGoals} liveUser={liveUser} visibleUserIds={visibleUserIds} />
         )}
         {view === "log" && canLog && (
-          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} />
+          <LogView liveUser={liveUser} entries={entries} saveEntries={saveEntries} users={users} />
         )}
         {view === "pipeline" && (
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
@@ -453,7 +471,7 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
   })();
 
   const scopeLabel = role === "bdr" ? "Your activity"
-    : role === "sales" ? "Your team (you + your BDRs)"
+    : role === "sales" ? "You + activity tagged to you"
     : "All activity";
 
   const showLeaderboard = role !== "bdr";
@@ -831,14 +849,22 @@ function Funnel({ calls, emails, appts }) {
   );
 }
 
-function LogView({ liveUser, entries, saveEntries }) {
-  const [form, setForm] = useState({ date: TODAY(), calls: "", emails: "", appts: "", notes: "" });
+function LogView({ liveUser, entries, saveEntries, users }) {
+  const isBDR = liveUser.role === "bdr";
+  const salesReps = (users || []).filter((u) => u.role === "sales");
+  // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
+  const [form, setForm] = useState({ date: TODAY(), calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
+  const [err, setErr] = useState("");
 
   const submit = async () => {
+    if (isBDR && !form.workingFor) { setErr("Please choose who you're working for."); return; }
+    setErr("");
+    const taggedRepId = form.workingFor && form.workingFor !== "self" ? form.workingFor : null;
     await saveEntries(() => api.addEntry({
       userId: liveUser.id, date: form.date,
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
+      taggedRepId,
     }));
     setForm({ ...form, calls: "", emails: "", appts: "", notes: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
@@ -848,12 +874,26 @@ function LogView({ liveUser, entries, saveEntries }) {
     .sort((a, b) => (b.date < a.date ? -1 : b.date > a.date ? 1 : (b.id < a.id ? -1 : 1))).slice(0, 12);
 
   const del = (id) => saveEntries(() => api.deleteEntry(id));
+  const repName = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : null; };
 
   return (
     <div className="logwrap" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.2fr)", gap: 20, alignItems: "start" }}>
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 22 }}>
         <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "0 0 4px" }}>Log a session</h2>
         <p style={{ margin: "0 0 20px", fontSize: 13.5, opacity: 0.55 }}>Logging as <b>{liveUser.name}</b> · {ROLES[liveUser.role].label}</p>
+        {isBDR && (
+          <Field label="Working for">
+            <div style={{ position: "relative" }}>
+              <select value={form.workingFor} onChange={(e) => { setForm({ ...form, workingFor: e.target.value }); setErr(""); }}
+                style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                <option value="" disabled>Choose a Sales Rep…</option>
+                <option value="self">Self-generated</option>
+                {salesReps.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </Field>
+        )}
         <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="Calls"><input type="number" min="0" placeholder="0" value={form.calls} onChange={(e) => setForm({ ...form, calls: e.target.value })} style={inputStyle} /></Field>
@@ -861,6 +901,7 @@ function LogView({ liveUser, entries, saveEntries }) {
           <Field label="Appts set"><input type="number" min="0" placeholder="0" value={form.appts} onChange={(e) => setForm({ ...form, appts: e.target.value })} style={inputStyle} /></Field>
         </div>
         <Field label="Notes (optional)"><textarea rows={2} placeholder="Prospect, company, follow-up…" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+        {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap"
           style={{ width: "100%", marginTop: 8, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: 13, fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <Plus size={17} /> Save session
@@ -874,7 +915,7 @@ function LogView({ liveUser, entries, saveEntries }) {
             {mine.map((e) => (
               <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: `1px solid ${LINE_C}` }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{isBDR ? ` · ${e.taggedRepId ? repName(e.taggedRepId) || "Rep" : "Self-generated"}` : ""}</div>
                   {e.notes && <div style={{ fontSize: 12, opacity: 0.5 }}>{e.notes}</div>}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -1094,18 +1135,22 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
       )}
 
       {modal && (
-        <DealModal deal={modal.deal} onSave={upsertDeal} onDelete={removeDeal} onClose={() => setModal(null)} />
+        <DealModal deal={modal.deal} onSave={upsertDeal} onDelete={removeDeal} onClose={() => setModal(null)}
+          liveUser={liveUser} salesReps={users.filter((u) => u.role === "sales")} />
       )}
     </>
   );
 }
 
-function DealModal({ deal, onSave, onDelete, onClose }) {
-  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "" });
+function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps }) {
+  const isBDR = liveUser && liveUser.role === "bdr";
+  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
   const submit = () => {
     if (!f.company.trim()) { setErr("Company / prospect name is required."); return; }
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), value: +f.value || 0, ...(deal ? { id: deal.id } : {}) });
+    if (isBDR && !f.taggedRepId) { setErr("Please choose who you're working for."); return; }
+    const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
+    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), value: +f.value || 0, taggedRepId, ...(deal ? { id: deal.id } : {}) });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
@@ -1115,6 +1160,19 @@ function DealModal({ deal, onSave, onDelete, onClose }) {
           <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
         </div>
         <Field label="Company / prospect"><input value={f.company} onChange={(e) => setF({ ...f, company: e.target.value })} style={inputStyle} placeholder="Acme Corp" autoFocus /></Field>
+        {isBDR && (
+          <Field label="Working for">
+            <div style={{ position: "relative" }}>
+              <select value={f.taggedRepId} onChange={(e) => { setF({ ...f, taggedRepId: e.target.value }); setErr(""); }}
+                style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                <option value="" disabled>Choose a Sales Rep…</option>
+                <option value="self">Self-generated</option>
+                {(salesReps || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </Field>
+        )}
         <Field label="Contact (optional)"><input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} style={inputStyle} placeholder="Name, title, phone/email" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Deal value ($)"><input type="number" min="0" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} style={inputStyle} placeholder="0" /></Field>
@@ -1169,13 +1227,13 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
       setBusyMsg(data.id ? "Saving…" : "Creating account…");
       if (data.id) {
         await saveUsers(() => api.updateProfile(data.id, {
-          name: data.name, email: data.email, role: data.role, managerId: data.managerId,
+          name: data.name, email: data.email, role: data.role,
         }));
       } else {
         // Creates the auth account (via Edge Function) + profile in one step.
         await saveUsers(() => api.adminCreateUser({
           name: data.name, email: data.email, password: data.password,
-          role: data.role, managerId: data.managerId,
+          role: data.role,
         }));
       }
       setModal(null);
@@ -1223,7 +1281,7 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 500, fontSize: 14 }}>{u.name}</div>
                       <div style={{ fontSize: 12.5, opacity: 0.5 }}>
-                        {u.email}{u.role === "bdr" ? ` · reports to ${mgrName(u.managerId)}` : ""}
+                        {u.email}
                       </div>
                     </div>
                   </div>
@@ -1244,13 +1302,13 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
 }
 
 function UserModal({ user, salesReps, onSave, onClose }) {
-  const [f, setF] = useState(user || { name: "", email: "", password: "", role: "bdr", managerId: (salesReps[0] && salesReps[0].id) || null });
+  const [f, setF] = useState(user || { name: "", email: "", password: "", role: "bdr" });
   const [err, setErr] = useState("");
 
   const submit = () => {
     if (!f.name.trim() || !f.email.trim()) { setErr("Name and email are required."); return; }
     if (!user && !f.password.trim()) { setErr("A password is required for a new user."); return; }
-    const data = { ...f, name: f.name.trim(), email: f.email.trim(), managerId: f.role === "bdr" ? f.managerId : null };
+    const data = { ...f, name: f.name.trim(), email: f.email.trim() };
     onSave(user ? { ...data, id: user.id } : data);
   };
 
@@ -1276,15 +1334,9 @@ function UserModal({ user, salesReps, onSave, onClose }) {
           </div>
         </Field>
         {f.role === "bdr" && (
-          <Field label="Reports to (Sales Rep)">
-            <div style={{ position: "relative" }}>
-              <select value={f.managerId || ""} onChange={(e) => setF({ ...f, managerId: e.target.value })} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
-                {salesReps.length === 0 && <option value="">No sales reps yet</option>}
-                {salesReps.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-            </div>
-          </Field>
+          <p style={{ fontSize: 12.5, opacity: 0.55, margin: "-2px 0 14px", lineHeight: 1.5 }}>
+            BDRs choose which Sales Rep they're working for each time they log activity or add a deal — no fixed assignment needed.
+          </p>
         )}
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap"
