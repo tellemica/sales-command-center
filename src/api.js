@@ -11,11 +11,11 @@ import { supabase } from "./supabaseClient";
 // ============================================================
 
 const toCamelProfile = (p) => p && ({ id: p.id, name: p.name, email: p.email, role: p.role, managerId: p.manager_id });
-const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "" });
-const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, value: Number(d.value), stage: d.stage, closeDate: d.close_date || "", notes: d.notes, apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "" });
+const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "", companyId: e.company_id || "" });
+const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, value: Number(d.value), stage: d.stage, closeDate: d.close_date || "", notes: d.notes, apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "", companyId: d.company_id || "" });
 
-const fromCamelEntry = (e) => ({ ...(e.id ? { id: e.id } : {}), user_id: e.userId, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, from_deal: e.fromDeal ?? null, tagged_rep_id: e.taggedRepId || null, company: e.company || null, ban: e.ban || null, contact: e.contact || null, phone: e.phone || null, email: e.email || null });
-const fromCamelDeal = (d) => ({ ...(d.id ? { id: d.id } : {}), owner_id: d.ownerId, company: d.company, contact: d.contact, value: d.value, stage: d.stage, close_date: d.closeDate || null, notes: d.notes, appt_credited: d.apptCredited ?? false, tagged_rep_id: d.taggedRepId || null });
+const fromCamelEntry = (e) => ({ ...(e.id ? { id: e.id } : {}), user_id: e.userId, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, from_deal: e.fromDeal ?? null, tagged_rep_id: e.taggedRepId || null, company: e.company || null, ban: e.ban || null, contact: e.contact || null, phone: e.phone || null, email: e.email || null, company_id: e.companyId || null });
+const fromCamelDeal = (d) => ({ ...(d.id ? { id: d.id } : {}), owner_id: d.ownerId, company: d.company, contact: d.contact, value: d.value, stage: d.stage, close_date: d.closeDate || null, notes: d.notes, appt_credited: d.apptCredited ?? false, tagged_rep_id: d.taggedRepId || null, company_id: d.companyId || null });
 
 // ---- Auth ----
 export async function signIn(email, password) {
@@ -89,6 +89,10 @@ export async function listEntries() {
 }
 
 export async function addEntry(entry) {
+  // Tie the activity to a company record (create one if this name is new).
+  if (entry.company && !entry.companyId) {
+    entry = { ...entry, companyId: await findOrCreateCompany(entry.company) };
+  }
   const { data, error } = await supabase.from("entries").insert(fromCamelEntry(entry)).select().single();
   if (error) throw error;
   return toCamelEntry(data);
@@ -96,7 +100,12 @@ export async function addEntry(entry) {
 
 // Insert many entries at once (used by bulk upload). Returns the created rows.
 export async function addEntriesBulk(entries) {
-  const rows = entries.map(fromCamelEntry);
+  // Resolve each distinct company name to an id once, then link rows.
+  const names = [...new Set(entries.map((e) => (e.company || "").trim()).filter(Boolean))];
+  const idByName = {};
+  for (const n of names) idByName[n.toLowerCase()] = await findOrCreateCompany(n);
+  const linked = entries.map((e) => ({ ...e, companyId: e.companyId || idByName[(e.company || "").trim().toLowerCase()] || null }));
+  const rows = linked.map(fromCamelEntry);
   const { data, error } = await supabase.from("entries").insert(rows).select();
   if (error) throw error;
   return (data || []).map(toCamelEntry);
@@ -115,6 +124,9 @@ export async function listDeals() {
 }
 
 export async function upsertDeal(deal) {
+  if (deal.company && !deal.companyId) {
+    deal = { ...deal, companyId: await findOrCreateCompany(deal.company) };
+  }
   const { data, error } = await supabase.from("deals").upsert(fromCamelDeal(deal)).select().single();
   if (error) throw error;
   return toCamelDeal(data);
@@ -166,5 +178,130 @@ export async function setUserGoal(userId, goal) {
 // Remove an override so the person falls back to the team default.
 export async function clearUserGoal(userId) {
   const { error } = await supabase.from("user_goals").delete().eq("user_id", userId);
+  if (error) throw error;
+}
+
+// ============================================================
+// CRM: Companies, Contacts, Notes, Attachments
+// ============================================================
+const toCamelCompany = (c) => c && ({
+  id: c.id, name: c.name, nameKey: c.name_key, industry: c.industry || "",
+  website: c.website || "", phone: c.phone || "", address: c.address || "",
+  ban: c.ban || "", notes: c.notes || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
+});
+
+export async function listCompanies() {
+  const { data, error } = await supabase.from("companies").select("*").order("name", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(toCamelCompany);
+}
+
+export async function getCompany(id) {
+  const { data, error } = await supabase.from("companies").select("*").eq("id", id).single();
+  if (error) throw error;
+  return toCamelCompany(data);
+}
+
+// Update editable company fields.
+export async function updateCompany(id, patch) {
+  const db = {};
+  ["name", "industry", "website", "phone", "address", "ban", "notes"].forEach((k) => {
+    if (patch[k] !== undefined) db[k] = patch[k];
+  });
+  if (patch.name !== undefined) db.name_key = patch.name.trim().toLowerCase();
+  const { data, error } = await supabase.from("companies").update(db).eq("id", id).select().single();
+  if (error) throw error;
+  return toCamelCompany(data);
+}
+
+// Find an existing company by name, or create it. Returns the company id.
+export async function findOrCreateCompany(name) {
+  const clean = (name || "").trim();
+  if (!clean) return null;
+  const key = clean.toLowerCase();
+  const { data: found } = await supabase.from("companies").select("id").eq("name_key", key).maybeSingle();
+  if (found) return found.id;
+  const { data: me } = await supabase.auth.getUser();
+  const { data, error } = await supabase.from("companies")
+    .insert({ name: clean, name_key: key, created_by: me?.user?.id || null })
+    .select("id").single();
+  if (error) {
+    // Race: another insert won. Re-fetch.
+    const { data: retry } = await supabase.from("companies").select("id").eq("name_key", key).maybeSingle();
+    if (retry) return retry.id;
+    throw error;
+  }
+  return data.id;
+}
+
+// ---- Contacts ----
+const toCamelContact = (c) => c && ({ id: c.id, companyId: c.company_id, name: c.name, title: c.title || "", phone: c.phone || "", email: c.email || "", notes: c.notes || "", createdAt: c.created_at });
+
+export async function listContacts(companyId) {
+  const { data, error } = await supabase.from("company_contacts").select("*").eq("company_id", companyId).order("name");
+  if (error) throw error;
+  return (data || []).map(toCamelContact);
+}
+export async function saveContact(companyId, contact) {
+  const row = { company_id: companyId, name: contact.name, title: contact.title || "", phone: contact.phone || "", email: contact.email || "", notes: contact.notes || "" };
+  if (contact.id) {
+    const { error } = await supabase.from("company_contacts").update(row).eq("id", contact.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from("company_contacts").insert(row);
+    if (error) throw error;
+  }
+}
+export async function deleteContact(id) {
+  const { error } = await supabase.from("company_contacts").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---- Notes ----
+const toCamelNote = (n) => n && ({ id: n.id, companyId: n.company_id, authorId: n.author_id, body: n.body, createdAt: n.created_at });
+
+export async function listCompanyNotes(companyId) {
+  const { data, error } = await supabase.from("company_notes").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelNote);
+}
+export async function addCompanyNote(companyId, body) {
+  const { data: me } = await supabase.auth.getUser();
+  const { error } = await supabase.from("company_notes").insert({ company_id: companyId, author_id: me?.user?.id || null, body });
+  if (error) throw error;
+}
+export async function deleteCompanyNote(id) {
+  const { error } = await supabase.from("company_notes").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---- Attachments (Storage bucket: company-files) ----
+const toCamelAttachment = (a) => a && ({ id: a.id, companyId: a.company_id, uploaderId: a.uploader_id, fileName: a.file_name, storagePath: a.storage_path, sizeBytes: a.size_bytes || 0, createdAt: a.created_at });
+
+export async function listAttachments(companyId) {
+  const { data, error } = await supabase.from("company_attachments").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelAttachment);
+}
+export async function uploadAttachment(companyId, file) {
+  const { data: me } = await supabase.auth.getUser();
+  const safe = file.name.replace(/[^\w.\-]+/g, "_");
+  const path = `${companyId}/${Date.now()}_${safe}`;
+  const up = await supabase.storage.from("company-files").upload(path, file, { upsert: false });
+  if (up.error) throw up.error;
+  const { error } = await supabase.from("company_attachments").insert({
+    company_id: companyId, uploader_id: me?.user?.id || null,
+    file_name: file.name, storage_path: path, size_bytes: file.size || 0,
+  });
+  if (error) throw error;
+}
+export async function attachmentUrl(storagePath) {
+  const { data, error } = await supabase.storage.from("company-files").createSignedUrl(storagePath, 60 * 10);
+  if (error) throw error;
+  return data.signedUrl;
+}
+export async function deleteAttachment(att) {
+  await supabase.storage.from("company-files").remove([att.storagePath]);
+  const { error } = await supabase.from("company_attachments").delete().eq("id", att.id);
   if (error) throw error;
 }
