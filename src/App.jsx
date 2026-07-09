@@ -118,17 +118,27 @@ export default function App() {
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const [view, setView] = useState("dashboard");
+  const [companies, setCompanies] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
   const [loaded, setLoaded] = useState(false);       // finished checking session
   const [authed, setAuthed] = useState(false);       // has a valid session
 
   // Pull all data the signed-in user is allowed to see. RLS filters server-side.
   const refetch = async () => {
-    const [us, es, ds, g, ug] = await Promise.all([
-      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(),
+    const [us, es, ds, g, ug, co] = await Promise.all([
+      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(), api.listCompanies(),
     ]);
-    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug);
+    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug); setCompanies(co);
     setGoals({ calls: g.calls, emails: g.emails, appts: g.appts });
   };
+
+  // Navigate to a company's detail page by name (used by all the "linked" company names).
+  const openCompanyByName = (name) => {
+    const key = (name || "").trim().toLowerCase();
+    const c = companies.find((x) => x.nameKey === key);
+    if (c) { setSelectedCompanyId(c.id); setView("companies"); }
+  };
+  const openCompanyById = (id) => { setSelectedCompanyId(id); setView("companies"); };
 
   // On load and whenever auth state changes, resolve session -> profile -> data.
   useEffect(() => {
@@ -214,6 +224,7 @@ export default function App() {
 
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
+  nav.push(["companies", "Companies", Building2]);
   nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
@@ -254,7 +265,7 @@ export default function App() {
           <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", minWidth: 0, maxWidth: "100%" }}>
             <nav className="hdr-nav" style={{ display: "flex", flexWrap: "wrap", gap: 6, background: "rgba(255,255,255,.08)", padding: 4, borderRadius: 10, maxWidth: "100%" }}>
               {nav.map(([id, label, Icon]) => (
-                <button key={id} onClick={() => setView(id)} className="tap"
+                <button key={id} onClick={() => { setView(id); if (id !== "companies") setSelectedCompanyId(null); }} className="tap"
                   style={{ display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13.5, fontWeight: 500, whiteSpace: "nowrap",
                     background: view === id ? PAPER : "transparent", color: view === id ? INK : PAPER }}>
                   <Icon size={15} /> {label}
@@ -310,7 +321,8 @@ export default function App() {
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
-            userGoals={userGoals} liveUser={effectiveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog} />
+            userGoals={userGoals} liveUser={effectiveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog}
+            onOpenCompany={(id, name) => id ? openCompanyById(id) : openCompanyByName(name)} />
         )}
         {view === "log" && canLog && (
           <LogView liveUser={effectiveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} visibleUserIds={visibleUserIds} />
@@ -320,6 +332,28 @@ export default function App() {
             liveUser={effectiveUser} users={users} visibleUserIds={visibleUserIds}
             entries={entries} saveEntries={saveEntries} />
         )}
+        {view === "companies" && (
+          selectedCompanyId ? (
+            <CompanyDetail
+              companyId={selectedCompanyId}
+              companies={companies}
+              entries={visibleEntries}
+              deals={visibleDeals}
+              users={users}
+              effectiveUser={effectiveUser}
+              onBack={() => setSelectedCompanyId(null)}
+              onOpenCompany={openCompanyById}
+              refetch={refetch}
+            />
+          ) : (
+            <CompaniesList
+              companies={companies}
+              entries={visibleEntries}
+              deals={visibleDeals}
+              onOpen={openCompanyById}
+            />
+          )
+        )}
         {view === "activity" && (
           <>
             <div style={{ marginBottom: 20 }}>
@@ -328,7 +362,8 @@ export default function App() {
                 Every activity record in your scope. Click a column to sort, or export to Excel.
               </p>
             </div>
-            <ActivityTable entries={visibleEntries} users={users} liveUser={effectiveUser} />
+            <ActivityTable entries={visibleEntries} users={users} liveUser={effectiveUser}
+              onOpenCompany={(id, name) => id ? openCompanyById(id) : openCompanyByName(name)} />
           </>
         )}
         {view === "goals" && canManageGoals && (
@@ -483,8 +518,359 @@ function Login({ onLogin }) {
   );
 }
 
+// ---- CRM: Companies list ----
+function CompaniesList({ companies, entries, deals, onOpen }) {
+  const [q, setQ] = useState("");
+  // Only show companies the user actually has visible activity/deals for (matches scope),
+  // plus any company with no rows yet that they can still see (RLS already filtered `companies`).
+  const stats = useMemo(() => {
+    const m = {};
+    companies.forEach((c) => { m[c.id] = { calls: 0, emails: 0, appts: 0, activities: 0, deals: 0, pipeline: 0, last: "" }; });
+    entries.forEach((e) => {
+      const s = m[e.companyId]; if (!s) return;
+      s.calls += e.calls || 0; s.emails += e.emails || 0; s.appts += e.appts || 0; s.activities += 1;
+      if (!s.last || e.date > s.last) s.last = e.date;
+    });
+    deals.forEach((d) => {
+      const s = m[d.companyId]; if (!s) return;
+      s.deals += 1; if (d.stage !== "lost") s.pipeline += Number(d.value) || 0;
+    });
+    return m;
+  }, [companies, entries, deals]);
+
+  const rows = companies
+    .filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Companies</h1>
+          <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>{rows.length} {rows.length === 1 ? "company" : "companies"} in your scope</p>
+        </div>
+        <div style={{ position: "relative" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search companies…"
+            style={{ ...inputStyle, width: 260, marginBottom: 0 }} />
+        </div>
+      </div>
+
+      <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 760 }}>
+            <thead>
+              <tr style={{ background: "#F1F5F9" }}>
+                {["Company", "Activities", "Calls", "Emails", "Appts", "Deals", "Pipeline", "Last activity"].map((h) => (
+                  <th key={h} style={{ textAlign: h === "Company" ? "left" : "center", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No companies yet. They appear here as activity is logged.</td></tr>
+              ) : rows.map((c) => {
+                const s = stats[c.id] || {};
+                return (
+                  <tr key={c.id} className="tap" onClick={() => onOpen(c.id)}
+                    style={{ borderTop: `1px solid ${LINE_C}`, cursor: "pointer" }}>
+                    <td style={{ padding: "11px 14px", fontWeight: 600, color: EMAIL, whiteSpace: "nowrap" }}>{c.name}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.activities || 0}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.calls || 0}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.emails || 0}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.appts || 0}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.deals || 0}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.pipeline ? "$" + s.pipeline.toLocaleString() : "—"}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center", whiteSpace: "nowrap", opacity: 0.7 }}>{s.last || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---- CRM: Company detail page (Overview, Activities, Deals, Contacts, Notes, Attachments) ----
+function CompanyDetail({ companyId, companies, entries, deals, users, effectiveUser, onBack, onOpenCompany, refetch }) {
+  const company = companies.find((c) => c.id === companyId);
+  const [tab, setTab] = useState("overview");
+  const [contacts, setContacts] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [attachments, setAttachments] = useState([]);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(company || {});
+  const [busy, setBusy] = useState("");
+
+  const companyEntries = entries.filter((e) => e.companyId === companyId).sort((a, b) => (b.date < a.date ? -1 : 1));
+  const companyDeals = deals.filter((d) => d.companyId === companyId);
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+
+  const loadSub = async () => {
+    try {
+      const [cs, ns, as] = await Promise.all([api.listContacts(companyId), api.listCompanyNotes(companyId), api.listAttachments(companyId)]);
+      setContacts(cs); setNotes(ns); setAttachments(as);
+    } catch (e) { /* surfaced per-action */ }
+  };
+  useEffect(() => { setDraft(company || {}); loadSub(); /* eslint-disable-next-line */ }, [companyId]);
+
+  if (!company) return <Empty msg="Company not found in your scope." />;
+
+  const totals = companyEntries.reduce((a, e) => ({ calls: a.calls + (e.calls || 0), emails: a.emails + (e.emails || 0), appts: a.appts + (e.appts || 0) }), { calls: 0, emails: 0, appts: 0 });
+  const pipeline = companyDeals.filter((d) => d.stage !== "lost").reduce((s, d) => s + (Number(d.value) || 0), 0);
+
+  const saveInfo = async () => {
+    setBusy("Saving…");
+    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, notes: draft.notes }); await refetch(); setEditing(false); }
+    finally { setBusy(""); }
+  };
+
+  const subTabs = [
+    ["overview", "Overview", Building2],
+    ["activities", `Activities (${companyEntries.length})`, TrendingUp],
+    ["deals", `Deals (${companyDeals.length})`, Briefcase],
+    ["contacts", `Contacts (${contacts.length})`, Users],
+    ["notes", `Notes (${notes.length})`, Pencil],
+    ["attachments", `Files (${attachments.length})`, FileSpreadsheet],
+  ];
+
+  return (
+    <>
+      <button onClick={onBack} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: EMAIL, fontSize: 13.5, fontWeight: 600, cursor: "pointer", marginBottom: 12, padding: 0 }}>
+        <ChevronLeft size={16} /> All companies
+      </button>
+
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg, ${BTN_A}, ${BTN_B})`, display: "grid", placeItems: "center", color: "#fff", fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600 }}>{(company.name[0] || "?").toUpperCase()}</div>
+          <div>
+            <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, margin: 0 }}>{company.name}</h1>
+            <div style={{ fontSize: 13, opacity: 0.6 }}>{company.industry || "No industry set"}{company.ban ? ` · BAN ${company.ban}` : ""}</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+          <MiniStat label="Calls" value={totals.calls} color={CALL} />
+          <MiniStat label="Emails" value={totals.emails} color={EMAIL} />
+          <MiniStat label="Appts" value={totals.appts} color={APPT} />
+          <MiniStat label="Pipeline" value={pipeline ? "$" + pipeline.toLocaleString() : "$0"} color={INK} />
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", borderBottom: `1px solid ${LINE_C}`, marginBottom: 18 }}>
+        {subTabs.map(([id, label, Icon]) => (
+          <button key={id} onClick={() => setTab(id)} className="tap"
+            style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", padding: "9px 12px", fontSize: 13.5, fontWeight: 600,
+              color: tab === id ? INK : "#8494A6", borderBottom: tab === id ? `2px solid ${CYAN}` : "2px solid transparent", marginBottom: -1 }}>
+            <Icon size={15} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {busy && <div style={{ fontSize: 13, color: CALL, marginBottom: 10 }}>{busy}</div>}
+
+      {/* OVERVIEW */}
+      {tab === "overview" && (
+        <Panel title="Company information" icon={Building2}>
+          {editing ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Field label="Company name"><input value={draft.name || ""} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Industry"><input value={draft.industry || ""} onChange={(e) => setDraft({ ...draft, industry: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Website"><input value={draft.website || ""} onChange={(e) => setDraft({ ...draft, website: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inputStyle} /></Field>
+                <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
+              </div>
+              <Field label="Description / overview"><textarea rows={3} value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={saveInfo} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>Save</button>
+                <button onClick={() => { setDraft(company); setEditing(false); }} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "9px 14px", fontSize: 14, cursor: "pointer" }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 24px", marginBottom: 14 }}>
+                <InfoRow label="Industry" value={company.industry} />
+                <InfoRow label="Website" value={company.website} link />
+                <InfoRow label="Phone" value={company.phone} />
+                <InfoRow label="BAN" value={company.ban} />
+                <InfoRow label="Address" value={company.address} />
+              </div>
+              {company.notes && <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 14px", opacity: 0.85 }}>{company.notes}</p>}
+              <button onClick={() => { setDraft(company); setEditing(true); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 13.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Edit company info</button>
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* ACTIVITIES */}
+      {tab === "activities" && <ActivityTable entries={companyEntries} users={users} liveUser={effectiveUser} />}
+
+      {/* DEALS */}
+      {tab === "deals" && (
+        <Panel title="Deals" icon={Briefcase}>
+          {companyDeals.length === 0 ? <Empty msg="No deals for this company yet." /> : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {companyDeals.map((d) => (
+                <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{d.contact || company.name}</div>
+                    <div style={{ fontSize: 12.5, opacity: 0.6, textTransform: "capitalize" }}>{d.stage} · {nameOf(d.ownerId)}</div>
+                  </div>
+                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600 }}>${(Number(d.value) || 0).toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
+
+      {/* CONTACTS */}
+      {tab === "contacts" && <ContactsSection companyId={companyId} contacts={contacts} reload={loadSub} />}
+
+      {/* NOTES */}
+      {tab === "notes" && <NotesSection companyId={companyId} notes={notes} nameOf={nameOf} effectiveUser={effectiveUser} reload={loadSub} />}
+
+      {/* ATTACHMENTS */}
+      {tab === "attachments" && <AttachmentsSection companyId={companyId} attachments={attachments} nameOf={nameOf} reload={loadSub} />}
+    </>
+  );
+}
+
+function MiniStat({ label, value, color }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, color }}>{value}</div>
+      <div style={{ fontSize: 11, opacity: 0.55, textTransform: "uppercase", letterSpacing: 0.5 }}>{label}</div>
+    </div>
+  );
+}
+function InfoRow({ label, value, link }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#8494A6", marginBottom: 2 }}>{label}</div>
+      {value ? (link ? <a href={value.startsWith("http") ? value : `https://${value}`} target="_blank" rel="noreferrer" style={{ color: EMAIL, fontSize: 14 }}>{value}</a> : <div style={{ fontSize: 14 }}>{value}</div>) : <div style={{ fontSize: 14, opacity: 0.4 }}>—</div>}
+    </div>
+  );
+}
+
+function ContactsSection({ companyId, contacts, reload }) {
+  const [modal, setModal] = useState(null); // contact being edited, or {} for new
+  const save = async (c) => { await api.saveContact(companyId, c); setModal(null); await reload(); };
+  const del = async (id) => { if (confirm("Delete this contact?")) { await api.deleteContact(id); await reload(); } };
+  return (
+    <Panel title="Contacts" icon={Users} action={<button onClick={() => setModal({})} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}><UserPlus size={14} /> Add contact</button>}>
+      {contacts.length === 0 ? <Empty msg="No contacts yet." /> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {contacts.map((c) => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : null}</div>
+                <div style={{ fontSize: 12.5, opacity: 0.65 }}>{[c.email, c.phone].filter(Boolean).join(" · ") || "No contact details"}</div>
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setModal(c)} className="tap" style={iconBtn} title="Edit"><Pencil size={14} /></button>
+                <button onClick={() => del(c.id)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <ContactModal contact={modal.id ? modal : null} onSave={save} onClose={() => setModal(null)} />}
+    </Panel>
+  );
+}
+function ContactModal({ contact, onSave, onClose }) {
+  const [f, setF] = useState(contact || { name: "", title: "", phone: "", email: "", notes: "" });
+  const [err, setErr] = useState("");
+  const submit = () => { if (!f.name.trim()) { setErr("Name is required."); return; } onSave(contact ? { ...f, id: contact.id } : f); };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 440 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 }}>{contact ? "Edit contact" : "New contact"}</h3>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} style={inputStyle} autoFocus /></Field>
+        <Field label="Title"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} style={inputStyle} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
+          <Field label="Phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} style={inputStyle} /></Field>
+        </div>
+        {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
+        <button onClick={submit} className="tap" style={{ width: "100%", background: INK, color: PAPER, border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Save contact</button>
+      </div>
+    </div>
+  );
+}
+
+function NotesSection({ companyId, notes, nameOf, effectiveUser, reload }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => { if (!text.trim()) return; setBusy(true); try { await api.addCompanyNote(companyId, text.trim()); setText(""); await reload(); } finally { setBusy(false); } };
+  const del = async (id) => { if (confirm("Delete this note?")) { await api.deleteCompanyNote(id); await reload(); } };
+  return (
+    <Panel title="Notes" icon={Pencil}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" style={{ ...inputStyle, marginBottom: 0, resize: "vertical" }} />
+        <button onClick={add} disabled={busy || !text.trim()} className="tap" style={{ background: text.trim() && !busy ? INK : LINE_C, color: text.trim() && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 600, cursor: text.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>Add</button>
+      </div>
+      {notes.length === 0 ? <Empty msg="No notes yet." /> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {notes.map((n) => (
+            <div key={n.id} style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n.body}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <span style={{ fontSize: 12, opacity: 0.5 }}>{nameOf(n.authorId) || "Someone"} · {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                {n.authorId === effectiveUser.id && <button onClick={() => del(n.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={13} /></button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function AttachmentsSection({ companyId, attachments, nameOf, reload }) {
+  const [busy, setBusy] = useState("");
+  const fileRef = React.useRef(null);
+  const onFile = async (file) => { if (!file) return; setBusy("Uploading…"); try { await api.uploadAttachment(companyId, file); await reload(); } catch (e) { setBusy("Upload failed: " + (e.message || "")); return; } setBusy(""); };
+  const open = async (a) => { try { const url = await api.attachmentUrl(a.storagePath); window.open(url, "_blank"); } catch (e) { alert("Couldn't open file."); } };
+  const del = async (a) => { if (confirm("Delete this file?")) { await api.deleteAttachment(a); await reload(); } };
+  const fmtSize = (b) => b > 1e6 ? (b / 1e6).toFixed(1) + " MB" : b > 1e3 ? Math.round(b / 1e3) + " KB" : b + " B";
+  return (
+    <Panel title="Attachments" icon={FileSpreadsheet} action={
+      <>
+        <button onClick={() => fileRef.current && fileRef.current.click()} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}><Plus size={14} /> Upload file</button>
+        <input ref={fileRef} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); e.target.value = ""; }} />
+      </>
+    }>
+      {busy && <div style={{ fontSize: 13, color: CALL, marginBottom: 10 }}>{busy}</div>}
+      {attachments.length === 0 ? <Empty msg="No files uploaded yet." /> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {attachments.map((a) => (
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ minWidth: 0 }}>
+                <button onClick={() => open(a)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 14, cursor: "pointer", padding: 0, textAlign: "left" }}>{a.fileName}</button>
+                <div style={{ fontSize: 12, opacity: 0.55 }}>{fmtSize(a.sizeBytes)} · {nameOf(a.uploaderId) || "Someone"} · {new Date(a.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => open(a)} className="tap" style={iconBtn} title="Download"><Download size={14} /></button>
+                <button onClick={() => del(a)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 // Spreadsheet-style table of activity records, with Excel export.
-function ActivityTable({ entries, users, liveUser, compact }) {
+function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
   const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
@@ -576,7 +962,9 @@ function ActivityTable({ entries, users, liveUser, compact }) {
             ) : rows.map((e) => (
               <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.date}</td>
-                <td style={{ padding: "9px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>{e.company || "—"}</td>
+                <td style={{ padding: "9px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>
+                  {e.company ? (onOpenCompany ? <button onClick={() => onOpenCompany(e.companyId, e.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{e.company}</button> : e.company) : "—"}
+                </td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.ban || "—"}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.contact || "—"}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.phone || "—"}</td>
@@ -596,7 +984,7 @@ function ActivityTable({ entries, users, liveUser, compact }) {
   );
 }
 
-function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds, setView, canLog }) {
+function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds, setView, canLog, onOpenCompany }) {
   const role = liveUser.role;
   const scopeUsers = users.filter((u) => visibleUserIds.includes(u.id));
   const repUsers = scopeUsers.filter((u) => u.role === "bdr" || u.role === "sales");
@@ -837,7 +1225,7 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
       )}
 
       <div style={{ marginTop: 16 }}>
-        <ActivityTable entries={scoped} users={users} liveUser={liveUser} compact />
+        <ActivityTable entries={scoped} users={users} liveUser={liveUser} compact onOpenCompany={onOpenCompany} />
       </div>
     </>
   );
@@ -1886,12 +2274,15 @@ function UserModal({ user, salesReps, onSave, onClose }) {
   );
 }
 
-function Panel({ title, children, style, icon: Icon }) {
+function Panel({ title, children, style, icon: Icon, action }) {
   return (
     <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 18, ...style }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
-        {Icon && <Icon size={16} color={INK} />}
-        <span style={{ fontSize: 14, fontWeight: 600 }}>{title}</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 7, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          {Icon && <Icon size={16} color={INK} />}
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{title}</span>
+        </div>
+        {action && <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{action}</div>}
       </div>
       {children}
     </div>
