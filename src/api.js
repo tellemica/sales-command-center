@@ -303,3 +303,60 @@ export async function deleteAttachment(att) {
   const { error } = await supabase.from("company_attachments").delete().eq("id", att.id);
   if (error) throw error;
 }
+// ============================================================
+const toCamelLead = (l) => l && ({
+  id: l.id, company: l.company, contact: l.contact || "", title: l.title || "",
+  phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
+  source: l.source || "", notes: l.notes || "", status: l.status || "New",
+  assignedTo: l.assigned_to || "", createdBy: l.created_by || "", companyId: l.company_id || "",
+  createdAt: l.created_at, updatedAt: l.updated_at,
+});
+const fromCamelLead = (l) => ({
+  ...(l.id ? { id: l.id } : {}),
+  company: l.company, contact: l.contact || "", title: l.title || "",
+  phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
+  source: l.source || "", notes: l.notes || "", status: l.status || "New",
+  assigned_to: l.assignedTo || null, created_by: l.createdBy || null,
+});
+
+export async function listLeads() {
+  const { data, error } = await supabase.from("leads").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelLead);
+}
+
+// Create one lead. created_by is set to the current user.
+export async function addLead(lead) {
+  const { data: me } = await supabase.auth.getUser();
+  const row = { ...fromCamelLead(lead), created_by: me?.user?.id || null };
+  const { data, error } = await supabase.from("leads").insert(row).select().single();
+  if (error) throw error;
+  return toCamelLead(data);
+}
+
+// Bulk insert leads (from an uploaded list).
+export async function addLeadsBulk(leads) {
+  const { data: me } = await supabase.auth.getUser();
+  const uid = me?.user?.id || null;
+  const rows = leads.map((l) => ({ ...fromCamelLead(l), created_by: uid }));
+  const { data, error } = await supabase.from("leads").insert(rows).select();
+  if (error) throw error;
+  return (data || []).map(toCamelLead);
+}
+
+// Update a lead (status, assignment, notes, any field).
+export async function updateLead(id, patch) {
+  const db = {};
+  const map = { company:"company", contact:"contact", title:"title", phone:"phone", email:"email",
+    ban:"ban", fan:"fan", source:"source", notes:"notes", status:"status" };
+  Object.keys(map).forEach((k) => { if (patch[k] !== undefined) db[map[k]] = patch[k]; });
+  if (patch.assignedTo !== undefined) db.assigned_to = patch.assignedTo || null;
+  const { data, error } = await supabase.from("leads").update(db).eq("id", id).select().single();
+  if (error) throw error;
+  return toCamelLead(data);
+}
+
+export async function deleteLead(id) {
+  const { error } = await supabase.from("leads").delete().eq("id", id);
+  if (error) throw error;
+}
