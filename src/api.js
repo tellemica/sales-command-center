@@ -218,20 +218,18 @@ export async function updateCompany(id, patch) {
 export async function findOrCreateCompany(name) {
   const clean = (name || "").trim();
   if (!clean) return null;
-  const key = clean.toLowerCase();
-  const { data: found } = await supabase.from("companies").select("id").eq("name_key", key).maybeSingle();
-  if (found) return found.id;
-  const { data: me } = await supabase.auth.getUser();
-  const { data, error } = await supabase.from("companies")
-    .insert({ name: clean, name_key: key, created_by: me?.user?.id || null })
-    .select("id").single();
-  if (error) {
-    // Race: another insert won. Re-fetch.
-    const { data: retry } = await supabase.from("companies").select("id").eq("name_key", key).maybeSingle();
-    if (retry) return retry.id;
-    throw error;
+  // Use the SECURITY DEFINER DB function: it finds an existing company by
+  // normalized name (regardless of row visibility) or creates it atomically.
+  // This avoids the "can't see it -> try to insert -> duplicate key" failure
+  // that blocked saves for BDRs. If anything goes wrong, return null so the
+  // activity still saves (linked by company name, just without company_id).
+  try {
+    const { data, error } = await supabase.rpc("find_or_create_company", { p_name: clean });
+    if (error) return null;
+    return data || null;
+  } catch {
+    return null;
   }
-  return data.id;
 }
 
 // ---- Contacts ----
