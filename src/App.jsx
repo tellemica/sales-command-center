@@ -5,7 +5,7 @@ import {
   Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
   ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
   UserPlus, Pencil, Eye, EyeOff, Briefcase, DollarSign, Kanban,
-  Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet
+  Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet, UserCheck
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -119,16 +119,17 @@ export default function App() {
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const [view, setView] = useState("dashboard");
   const [companies, setCompanies] = useState([]);
+  const [leads, setLeads] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
   const [loaded, setLoaded] = useState(false);       // finished checking session
   const [authed, setAuthed] = useState(false);       // has a valid session
 
   // Pull all data the signed-in user is allowed to see. RLS filters server-side.
   const refetch = async () => {
-    const [us, es, ds, g, ug, co] = await Promise.all([
-      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(), api.listCompanies(),
+    const [us, es, ds, g, ug, co, ld] = await Promise.all([
+      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(), api.listCompanies(), api.listLeads(),
     ]);
-    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug); setCompanies(co);
+    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug); setCompanies(co); setLeads(ld);
     setGoals({ calls: g.calls, emails: g.emails, appts: g.appts });
   };
 
@@ -225,6 +226,7 @@ export default function App() {
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
   nav.push(["companies", "Companies", Building2]);
+  nav.push(["leads", "Leads", UserCheck]);
   nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
@@ -353,6 +355,16 @@ export default function App() {
               onOpen={openCompanyById}
             />
           )
+        )}
+        {view === "leads" && (
+          <LeadsView
+            leads={leads}
+            users={users}
+            effectiveUser={effectiveUser}
+            visibleUserIds={visibleUserIds}
+            refetch={refetch}
+            onOpenCompany={openCompanyByName}
+          />
         )}
         {view === "activity" && (
           <>
@@ -513,6 +525,277 @@ function Login({ onLogin }) {
       {/* LIVE status pill */}
       <div style={{ position: "fixed", left: 18, bottom: 18, display: "flex", alignItems: "center", gap: 6, background: "#189B72", color: "#fff", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", boxShadow: "0 4px 12px rgba(0,0,0,.2)" }}>
         <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff" }} /> Live
+      </div>
+    </div>
+  );
+}
+
+// ---- Leads ----
+const LEAD_STATUSES = ["new", "contacted", "qualified", "converted", "dead"];
+const LEAD_STATUS_META = {
+  new:       { label: "New",       color: "#2C6FB5", bg: "#E8F1FB" },
+  contacted: { label: "Contacted", color: "#B5852C", bg: "#FBF3E1" },
+  qualified: { label: "Qualified", color: "#2C8C6F", bg: "#E3F5EE" },
+  converted: { label: "Converted", color: "#189B72", bg: "#DDF3EA" },
+  dead:      { label: "Dead",      color: "#8494A6", bg: "#EEF1F4" },
+};
+
+function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
+  const role = effectiveUser.role;
+  const canManageAll = role === "admin" || role === "management";
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [showUpload, setShowUpload] = useState(false);
+  const [busy, setBusy] = useState("");
+
+  // People a lead can be assigned to = BDRs + Sales Reps in scope.
+  const assignable = users.filter((u) => (u.role === "bdr" || u.role === "sales") && (canManageAll || visibleUserIds.includes(u.id)));
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+
+  const filtered = leads.filter((l) => {
+    if (q && !(`${l.company} ${l.contact} ${l.email}`.toLowerCase().includes(q.trim().toLowerCase()))) return false;
+    if (statusFilter !== "all" && l.status !== statusFilter) return false;
+    if (assigneeFilter !== "all") {
+      if (assigneeFilter === "unassigned" && l.assignedTo) return false;
+      if (assigneeFilter !== "unassigned" && l.assignedTo !== assigneeFilter) return false;
+    }
+    return true;
+  });
+
+  const setStatus = async (lead, status) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { status }); await refetch(); } finally { setBusy(""); } };
+  const setAssignee = async (lead, assignedTo) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { assignedTo }); await refetch(); } finally { setBusy(""); } };
+  const del = async (lead) => { if (confirm(`Delete lead "${lead.company}"?`)) { await api.deleteLead(lead.id); await refetch(); } };
+
+  // status counts for the summary chips
+  const counts = LEAD_STATUSES.reduce((a, s) => ({ ...a, [s]: leads.filter((l) => l.status === s).length }), {});
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
+        <div>
+          <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Leads</h1>
+          <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
+            {filtered.length} {filtered.length === 1 ? "lead" : "leads"}{canManageAll ? "" : " assigned to you"}. {busy && <b style={{ color: CALL }}>{busy}</b>}
+          </p>
+        </div>
+        <button onClick={() => setShowUpload(true)} className="tap"
+          style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          <FileSpreadsheet size={15} /> Upload leads
+        </button>
+      </div>
+
+      {/* Status summary chips */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {LEAD_STATUSES.map((s) => (
+          <button key={s} onClick={() => setStatusFilter(statusFilter === s ? "all" : s)} className="tap"
+            style={{ display: "flex", alignItems: "center", gap: 6, border: statusFilter === s ? `1px solid ${LEAD_STATUS_META[s].color}` : `1px solid ${LINE_C}`, background: statusFilter === s ? LEAD_STATUS_META[s].bg : "#fff", borderRadius: 20, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", color: LEAD_STATUS_META[s].color }}>
+            {LEAD_STATUS_META[s].label} <span style={{ opacity: 0.7 }}>{counts[s]}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search company, contact, email…" style={{ ...inputStyle, width: 280, marginBottom: 0 }} />
+        {canManageAll && (
+          <div style={{ position: "relative" }}>
+            <select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}
+              style={{ appearance: "none", background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 34px 10px 14px", fontSize: 14, cursor: "pointer" }}>
+              <option value="all">All assignees</option>
+              <option value="unassigned">Unassigned</option>
+              {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+            <thead>
+              <tr style={{ background: "#F1F5F9" }}>
+                {["Company", "Contact", "Phone", "Email", "Status", "Assigned to", ""].map((h) => (
+                  <th key={h} style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</td></tr>
+              ) : filtered.map((l) => (
+                <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>
+                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{l.company}</button>
+                  </td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.contact || "—"}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.phone || "—"}</td>
+                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.email || "—"}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
+                      style={{ appearance: "none", border: "none", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg }}>
+                      {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
+                    </select>
+                  </td>
+                  <td style={{ padding: "10px 14px" }}>
+                    {canManageAll ? (
+                      <div style={{ position: "relative" }}>
+                        <select value={l.assignedTo || ""} onChange={(e) => setAssignee(l, e.target.value)}
+                          style={{ appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 26px 6px 10px", fontSize: 13, cursor: "pointer" }}>
+                          <option value="">Unassigned</option>
+                          {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 8, top: 9, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 13 }}>{nameOf(l.assignedTo) || "—"}</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                    {(canManageAll || l.createdBy === effectiveUser.id) && (
+                      <button onClick={() => del(l)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={14} /></button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showUpload && <LeadUpload users={users} assignable={assignable} refetch={refetch} onClose={() => setShowUpload(false)} />}
+    </>
+  );
+}
+
+function LeadUpload({ users, assignable, refetch, onClose }) {
+  const [rows, setRows] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+  const fileRef = React.useRef(null);
+  const COLS = ["Company", "Contact", "Phone", "Email", "BAN", "FAN", "Assign To", "Status", "Notes"];
+
+  const matchUser = (name) => { const n = (name || "").trim().toLowerCase(); if (!n) return null; return assignable.find((u) => u.name.trim().toLowerCase() === n) || null; };
+
+  const downloadTemplate = async () => {
+    const example = { Company: "Acme Corp", Contact: "Jane Smith", Phone: "(610) 555-0100", Email: "jane@acme.com", BAN: "123456789", FAN: "987654321", "Assign To": (assignable[0] && assignable[0].name) || "", Status: "new", Notes: "Referred by partner" };
+    const blank = Object.fromEntries(COLS.map((c) => [c, ""]));
+    const ws = XLSX.utils.json_to_sheet([example, blank], { header: COLS });
+    ws["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 34 }];
+    // Lists sheet for dropdowns
+    const assignOpts = assignable.map((u) => u.name);
+    const maxLen = Math.max(assignOpts.length, LEAD_STATUSES.length);
+    const listAoa = [["AssignTo", "Status"]];
+    for (let i = 0; i < maxLen; i++) listAoa.push([assignOpts[i] || "", LEAD_STATUSES[i] || ""]);
+    const wsList = XLSX.utils.aoa_to_sheet(listAoa);
+    const ref = [{ Column: "Assign To", "Accepted values": "(leave blank = unassigned)" }, ...assignable.map((u) => ({ Column: "Assign To", "Accepted values": `${u.name} (${ROLES[u.role].label})` })), ...LEAD_STATUSES.map((s) => ({ Column: "Status", "Accepted values": s }))];
+    const wsRef = XLSX.utils.json_to_sheet(ref); wsRef["!cols"] = [{ wch: 16 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    XLSX.utils.book_append_sheet(wb, wsRef, "Reference");
+    XLSX.utils.book_append_sheet(wb, wsList, "Lists");
+    wb.Workbook = { Sheets: wb.SheetNames.map((name) => ({ name, Hidden: name === "Leads" ? 0 : 1 })) };
+    const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+    try {
+      const zip = await JSZip.loadAsync(buf);
+      let xml = await zip.file("xl/worksheets/sheet1.xml").async("string");
+      const N = 2000;
+      const dvs = [
+        { sqref: `G2:G${N + 1}`, f: `Lists!$A$2:$A$${assignOpts.length + 1}` }, // Assign To
+        { sqref: `H2:H${N + 1}`, f: `Lists!$B$2:$B$${LEAD_STATUSES.length + 1}` }, // Status
+      ];
+      const dvXml = `<dataValidations count="${dvs.length}">` + dvs.map((d) => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${d.f}</formula1></dataValidation>`).join("") + `</dataValidations>`;
+      xml = xml.includes("</sheetData>") ? xml.replace("</sheetData>", "</sheetData>" + dvXml) : xml.replace("</worksheet>", dvXml + "</worksheet>");
+      zip.file("xl/worksheets/sheet1.xml", xml);
+      const blob = await zip.generateAsync({ type: "blob", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "tellemica-leads-template.xlsx"; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch { XLSX.writeFile(wb, "tellemica-leads-template.xlsx"); }
+  };
+
+  const onFile = async (file) => {
+    setDone(""); setRows(null); setFileName(file.name);
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+    const parsed = raw.map((r, i) => {
+      const errors = [];
+      const company = String(r["Company"] || "").trim();
+      if (!company) errors.push("Company is required");
+      let assignedTo = null;
+      const a = String(r["Assign To"] || "").trim();
+      if (a) { const u = matchUser(a); if (!u) errors.push(`"Assign To" — no BDR/Sales Rep named "${a}"`); else assignedTo = u.id; }
+      let status = String(r["Status"] || "new").trim().toLowerCase();
+      if (!LEAD_STATUSES.includes(status)) { if (status) errors.push(`"Status" — "${status}" isn't valid`); status = "new"; }
+      return {
+        _row: i + 2, errors, company, contact: String(r["Contact"] || "").trim(), phone: String(r["Phone"] || "").trim(),
+        email: String(r["Email"] || "").trim(), ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(),
+        notes: String(r["Notes"] || "").trim(), assignedTo, status,
+        assigneeName: assignedTo ? (assignable.find((u) => u.id === assignedTo) || {}).name : "Unassigned",
+      };
+    }).filter((r) => r.company || r.errors.length);
+    setRows(parsed);
+  };
+
+  const valid = (rows || []).filter((r) => !r.errors.length);
+  const invalid = (rows || []).filter((r) => r.errors.length);
+
+  const doImport = async () => {
+    if (!valid.length) return; setBusy(true);
+    try {
+      await api.addLeadsBulk(valid.map((r) => ({ company: r.company, contact: r.contact, phone: r.phone, email: r.email, ban: r.ban, fan: r.fan, notes: r.notes, status: r.status, assignedTo: r.assignedTo })));
+      await refetch(); setDone(`Imported ${valid.length} ${valid.length === 1 ? "lead" : "leads"}.`); setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
+    } catch (e) { setDone("Import failed: " + (e.message || "")); } finally { setBusy(false); }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 680, maxHeight: "88vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: 0 }}>Upload leads</h3>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <p style={{ margin: "0 0 16px", fontSize: 13.5, opacity: 0.6, lineHeight: 1.5 }}>Download the template, fill in one row per lead, then upload. You can assign during upload or from the Leads list afterward.</p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <button onClick={downloadTemplate} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><Download size={15} /> Download template</button>
+          <button onClick={() => fileRef.current && fileRef.current.click()} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><FileSpreadsheet size={15} /> Choose Excel file</button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }} />
+        </div>
+        {fileName && <div style={{ fontSize: 12.5, opacity: 0.6, marginBottom: 8 }}>Loaded: <b>{fileName}</b></div>}
+        {done && <div style={{ marginTop: 10, background: CALL + "18", color: CALL, borderRadius: 8, padding: "10px 12px", fontSize: 13.5, fontWeight: 500 }}>{done}</div>}
+
+        {rows && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{valid.length} ready</span>
+              {invalid.length > 0 && <span style={{ fontSize: 14, fontWeight: 600, color: "#B4453F" }}>{invalid.length} with issues</span>}
+              <button onClick={doImport} disabled={busy || !valid.length} className="tap" style={{ marginLeft: "auto", background: valid.length && !busy ? INK : LINE_C, color: valid.length && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: valid.length && !busy ? "pointer" : "default" }}>{busy ? "Importing…" : `Import ${valid.length}`}</button>
+            </div>
+            {invalid.length > 0 && (
+              <div style={{ background: "#FBECEB", border: "1px solid #E6C9C7", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+                {invalid.slice(0, 6).map((r) => <div key={r._row} style={{ fontSize: 12.5, color: "#8A3B36", marginBottom: 3 }}>Row {r._row}{r.company ? ` (${r.company})` : ""}: {r.errors.join("; ")}</div>)}
+                {invalid.length > 6 && <div style={{ fontSize: 12.5, color: "#8A3B36" }}>…and {invalid.length - 6} more.</div>}
+              </div>
+            )}
+            <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 560 }}>
+                <thead><tr style={{ background: "#F1F5F9" }}>{["", "Company", "Contact", "Status", "Assign to"].map((h) => <th key={h} style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {rows.slice(0, 50).map((r) => (
+                    <tr key={r._row} style={{ borderTop: `1px solid ${LINE_C}`, background: r.errors.length ? "#FDF4F3" : "transparent" }}>
+                      <td style={{ padding: "7px 10px" }}>{r.errors.length ? <X size={14} color="#B4453F" /> : <CheckCircle2 size={14} color="#189B72" />}</td>
+                      <td style={{ padding: "7px 10px", fontWeight: 600 }}>{r.company || "—"}</td>
+                      <td style={{ padding: "7px 10px" }}>{r.contact || "—"}</td>
+                      <td style={{ padding: "7px 10px", textTransform: "capitalize" }}>{r.status}</td>
+                      <td style={{ padding: "7px 10px" }}>{r.assigneeName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
