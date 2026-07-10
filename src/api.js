@@ -11,10 +11,10 @@ import { supabase } from "./supabaseClient";
 // ============================================================
 
 const toCamelProfile = (p) => p && ({ id: p.id, name: p.name, email: p.email, role: p.role, managerId: p.manager_id });
-const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "", companyId: e.company_id || "" });
+const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", fan: e.fan || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "", companyId: e.company_id || "" });
 const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, value: Number(d.value), stage: d.stage, closeDate: d.close_date || "", notes: d.notes, apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "", companyId: d.company_id || "" });
 
-const fromCamelEntry = (e) => ({ ...(e.id ? { id: e.id } : {}), user_id: e.userId, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, from_deal: e.fromDeal ?? null, tagged_rep_id: e.taggedRepId || null, company: e.company || null, ban: e.ban || null, contact: e.contact || null, phone: e.phone || null, email: e.email || null, company_id: e.companyId || null });
+const fromCamelEntry = (e) => ({ ...(e.id ? { id: e.id } : {}), user_id: e.userId, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, from_deal: e.fromDeal ?? null, tagged_rep_id: e.taggedRepId || null, company: e.company || null, ban: e.ban || null, fan: e.fan || null, contact: e.contact || null, phone: e.phone || null, email: e.email || null, company_id: e.companyId || null });
 const fromCamelDeal = (d) => ({ ...(d.id ? { id: d.id } : {}), owner_id: d.ownerId, company: d.company, contact: d.contact, value: d.value, stage: d.stage, close_date: d.closeDate || null, notes: d.notes, appt_credited: d.apptCredited ?? false, tagged_rep_id: d.taggedRepId || null, company_id: d.companyId || null });
 
 // ---- Auth ----
@@ -187,7 +187,7 @@ export async function clearUserGoal(userId) {
 const toCamelCompany = (c) => c && ({
   id: c.id, name: c.name, nameKey: c.name_key, industry: c.industry || "",
   website: c.website || "", phone: c.phone || "", address: c.address || "",
-  ban: c.ban || "", notes: c.notes || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
+  ban: c.ban || "", fan: c.fan || "", notes: c.notes || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
 });
 
 export async function listCompanies() {
@@ -205,7 +205,7 @@ export async function getCompany(id) {
 // Update editable company fields.
 export async function updateCompany(id, patch) {
   const db = {};
-  ["name", "industry", "website", "phone", "address", "ban", "notes"].forEach((k) => {
+  ["name", "industry", "website", "phone", "address", "ban", "fan", "notes"].forEach((k) => {
     if (patch[k] !== undefined) db[k] = patch[k];
   });
   if (patch.name !== undefined) db.name_key = patch.name.trim().toLowerCase();
