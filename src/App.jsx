@@ -622,7 +622,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
 
   const saveInfo = async () => {
     setBusy("Saving…");
-    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, notes: draft.notes }); await refetch(); setEditing(false); }
+    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes }); await refetch(); setEditing(false); }
     finally { setBusy(""); }
   };
 
@@ -681,6 +681,8 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <Field label="Website"><input value={draft.website || ""} onChange={(e) => setDraft({ ...draft, website: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inputStyle} /></Field>
                 <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
+                <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
+                <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
               </div>
               <Field label="Description / overview"><textarea rows={3} value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
@@ -696,6 +698,8 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <InfoRow label="Website" value={company.website} link />
                 <InfoRow label="Phone" value={company.phone} />
                 <InfoRow label="BAN" value={company.ban} />
+                <InfoRow label="FAN" value={company.fan} />
+                <InfoRow label="FAN" value={company.fan} />
                 <InfoRow label="Address" value={company.address} />
               </div>
               {company.notes && <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 14px", opacity: 0.85 }}>{company.notes}</p>}
@@ -903,6 +907,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
       Date: e.date,
       Company: e.company || "",
       BAN: e.ban || "",
+      FAN: e.fan || "",
       Contact: e.contact || "",
       Phone: e.phone || "",
       Email: e.email || "",
@@ -915,7 +920,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     ws["!cols"] = [
-      { wch: 11 }, { wch: 24 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 24 },
+      { wch: 11 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 24 },
       { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 40 },
     ];
     const wb = XLSX.utils.book_new();
@@ -925,7 +930,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   };
 
   const cols = [
-    ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["contact", "Contact"],
+    ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["fan", "FAN"], ["contact", "Contact"],
     ["phone", "Phone"], ["email", "Email"], ["calls", "Calls"], ["emails", "Emails"],
     ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Working for"], ["notes", "Notes"],
   ];
@@ -966,6 +971,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
                   {e.company ? (onOpenCompany ? <button onClick={() => onOpenCompany(e.companyId, e.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{e.company}</button> : e.company) : "—"}
                 </td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.ban || "—"}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.fan || "—"}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.contact || "—"}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.phone || "—"}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.email || "—"}</td>
@@ -1448,18 +1454,18 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   const [done, setDone] = useState("");
   const fileRef = React.useRef(null);
 
-  const TEMPLATE_COLS = ["Date", "Company", "BAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Prospecting For", "BDR/Sale Rep [You]", "Notes"];
+  const TEMPLATE_COLS = ["Date", "Company", "BAN", "FAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Prospecting For", "BDR/Sale Rep [You]", "Notes"];
 
   const downloadTemplate = async () => {
     const N = 2000; // rows the dropdowns cover
     const example = {
-      Date: TODAY_US(), Company: "Acme Corp", BAN: "123456789", Contact: "Jane Smith",
+      Date: TODAY_US(), Company: "Acme Corp", BAN: "123456789", FAN: "987654321", Contact: "Jane Smith",
       Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 0, Emails: 0, Appointments: 0,
       "Prospecting For": "Self-generated", "BDR/Sale Rep [You]": liveUser.name, Notes: "Intro call, follow up next week",
     };
     const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
     const ws = XLSX.utils.json_to_sheet([example, blank], { header: TEMPLATE_COLS });
-    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
     // Force the Date column (A) to display MM-DD-YYYY for any date the user types.
     for (let row = 2; row <= 2001; row++) {
       const addr = `A${row}`;
@@ -1509,11 +1515,11 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
       const wfEnd = workingForOpts.length + 1;   // Lists!$A$2:$A$n
       const roEnd = repOwnerOpts.length + 1;      // Lists!$B$2:$B$n
       const dvs = [
-        { sqref: `G2:G${N + 1}`, f: '"0,1"' },      // Calls
-        { sqref: `H2:H${N + 1}`, f: '"0,1"' },      // Emails
-        { sqref: `I2:I${N + 1}`, f: '"0,1"' },      // Appointments
-        { sqref: `J2:J${N + 1}`, f: `Lists!$A$2:$A$${wfEnd}` },  // Prospecting For
-        { sqref: `K2:K${N + 1}`, f: `Lists!$B$2:$B$${roEnd}` }, // BDR/Sale Rep [You]
+        { sqref: `H2:H${N + 1}`, f: '"0,1"' },      // Calls
+        { sqref: `I2:I${N + 1}`, f: '"0,1"' },      // Emails
+        { sqref: `J2:J${N + 1}`, f: '"0,1"' },      // Appointments
+        { sqref: `K2:K${N + 1}`, f: `Lists!$A$2:$A$${wfEnd}` },  // Prospecting For
+        { sqref: `L2:L${N + 1}`, f: `Lists!$B$2:$B$${roEnd}` }, // BDR/Sale Rep [You]
       ];
       const dvXml = `<dataValidations count="${dvs.length}">` +
         dvs.map((d) => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${d.f}</formula1></dataValidation>`).join("") +
@@ -1608,7 +1614,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
         _row: idx + 2, // account for header row (Excel row number)
         errors,
         userId, taggedRepId, date, company,
-        ban: String(r["BAN"] || "").trim(), contact: String(r["Contact"] || "").trim(),
+        ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(), contact: String(r["Contact"] || "").trim(),
         phone: String(r["Phone"] || "").trim(), email: String(r["Email"] || "").trim(),
         calls, emails, appts, notes: String(r["Notes"] || "").trim(),
         ownerName: (assignable.find((u) => u.id === userId) || {}).name || liveUser.name,
@@ -1626,7 +1632,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
     setBusy(true);
     try {
       await saveEntries(() => api.addEntriesBulk(valid.map((r) => ({
-        userId: r.userId, date: r.date, company: r.company, ban: r.ban, contact: r.contact,
+        userId: r.userId, date: r.date, company: r.company, ban: r.ban, fan: r.fan, contact: r.contact,
         phone: r.phone, email: r.email, calls: r.calls, emails: r.emails, appts: r.appts,
         notes: r.notes, taggedRepId: r.taggedRepId,
       }))));
@@ -1722,7 +1728,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -1732,7 +1738,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     const map = new Map();
     (allEntries || entries).forEach((e) => {
       const c = (e.company || "").trim();
-      if (c && !map.has(c.toLowerCase())) map.set(c.toLowerCase(), { company: c, ban: e.ban || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "" });
+      if (c && !map.has(c.toLowerCase())) map.set(c.toLowerCase(), { company: c, ban: e.ban || "", fan: e.fan || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "" });
     });
     return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
   }, [allEntries, entries]);
@@ -1743,7 +1749,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
 
   const pickCompany = (c) => {
     // Reuse known details for this company, but let the user override any field.
-    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email }));
+    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email }));
     setShowSuggest(false);
   };
 
@@ -1754,12 +1760,12 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     const taggedRepId = form.workingFor && form.workingFor !== "self" ? form.workingFor : null;
     await saveEntries(() => api.addEntry({
       userId: liveUser.id, date: form.date,
-      company: form.company.trim(), ban: form.ban.trim(), contact: form.contact.trim(),
+      company: form.company.trim(), ban: form.ban.trim(), fan: form.fan.trim(), contact: form.contact.trim(),
       phone: form.phone.trim(), email: form.email.trim(),
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
       taggedRepId,
     }));
-    setForm({ ...form, company: "", ban: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "" });
+    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
 
@@ -1810,8 +1816,9 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         </Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="BAN"><input value={form.ban} onChange={(e) => setForm({ ...form, ban: e.target.value })} style={inputStyle} placeholder="Billing account #" /></Field>
-          <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
+          <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
+        <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
           <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
