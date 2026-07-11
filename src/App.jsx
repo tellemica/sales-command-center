@@ -1171,6 +1171,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
         case "company": av = (a.company || "").toLowerCase(); bv = (b.company || "").toLowerCase(); break;
         case "rep": av = repOf(a).toLowerCase(); bv = repOf(b).toLowerCase(); break;
         case "logged": av = nameOf(a.userId).toLowerCase(); bv = nameOf(b.userId).toLowerCase(); break;
+        case "carrier": av = (a.carrierRep || "").toLowerCase(); bv = (b.carrierRep || "").toLowerCase(); break;
         case "calls": av = a.calls || 0; bv = b.calls || 0; break;
         case "emails": av = a.emails || 0; bv = b.emails || 0; break;
         case "appts": av = a.appts || 0; bv = b.appts || 0; break;
@@ -1199,12 +1200,13 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
       Appointments: e.appts || 0,
       "Logged by": nameOf(e.userId),
       "Tellemica Sales Rep": repOf(e),
+      "Carrier Rep": e.carrierRep || "",
       Notes: e.notes || "",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     ws["!cols"] = [
       { wch: 11 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 20 }, { wch: 16 }, { wch: 24 },
-      { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 40 },
+      { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 40 },
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Activity");
@@ -1215,9 +1217,9 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   const cols = [
     ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["fan", "FAN"], ["contact", "Contact"],
     ["phone", "Phone"], ["email", "Email"], ["calls", "Calls"], ["emails", "Emails"],
-    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Tellemica Sales Rep"], ["notes", "Notes"],
+    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Tellemica Sales Rep"], ["carrier", "Carrier Rep"], ["notes", "Notes"],
   ];
-  const sortable = new Set(["date", "company", "calls", "emails", "appts", "logged", "rep"]);
+  const sortable = new Set(["date", "company", "calls", "emails", "appts", "logged", "rep", "carrier"]);
 
   return (
     <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
@@ -1263,6 +1265,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
                 <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.appts || 0}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{nameOf(e.userId)}</td>
                 <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{repOf(e)}</td>
+                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.carrierRep || "—"}</td>
                 <td style={{ padding: "9px 12px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.notes || ""}>{e.notes || "—"}</td>
               </tr>
             ))}
