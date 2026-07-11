@@ -77,6 +77,8 @@ const STAGES = [
 ];
 const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]));
 const OPEN_STAGES = STAGES.filter((s) => s.id !== "won" && s.id !== "lost");
+// Reasons captured when a deal is marked Closed Lost — drives win/loss reporting.
+const LOST_REASONS = ["Price / budget", "Went with competitor", "Timing / no decision", "No response / went dark", "Not a fit", "Other"];
 const fmtMoney = (n) => "$" + (n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 // Tellemica logo lockup. `wordmark` renders the letter-spaced uppercase treatment
@@ -1512,6 +1514,28 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
         )}
       </Panel>
 
+      {lostDeals.some((d) => d.lostReason) && (
+        <Panel title="Why deals were lost" style={{ marginTop: 16 }}>
+          <div style={{ display: "grid", gap: 10 }}>
+            {(() => {
+              const counts = {};
+              lostDeals.forEach((d) => { const r = d.lostReason || "Unspecified"; counts[r] = (counts[r] || 0) + 1; });
+              const ordered = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+              const maxC = Math.max(1, ...ordered.map(([, c]) => c));
+              return ordered.map(([reason, count]) => (
+                <div key={reason} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ width: 150, fontSize: 13, fontWeight: 500 }}>{reason}</span>
+                  <div style={{ flex: 1, height: 20, background: LINE_C, borderRadius: 6, overflow: "hidden" }}>
+                    <div style={{ width: `${(count / maxC) * 100}%`, height: "100%", background: "#B4453F", borderRadius: 6, minWidth: 3, transition: "width .4s ease" }} />
+                  </div>
+                  <span style={{ width: 40, textAlign: "right", fontSize: 13, opacity: 0.75 }}>{count}</span>
+                </div>
+              ));
+            })()}
+          </div>
+        </Panel>
+      )}
+
       {showLeaderboard && (
         <Panel title="Rep leaderboard" style={{ marginTop: 16 }} icon={Trophy}>
           {leaderboard.every((r) => !r.calls && !r.emails && !r.appts) ? (
@@ -2194,7 +2218,7 @@ function Pill({ icon: Icon, color, n }) {
 // ---- Pipeline (CRM) ----
 function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds, entries, saveEntries }) {
   const role = liveUser.role;
-  const canEdit = role === "bdr" || role === "sales"; // only reps own/edit deals
+  const canEdit = role === "bdr" || role === "sales" || role === "admin" || role === "manager"; // reps own deals; admins/managers can also manage
   const [mode, setMode] = useState("board"); // board | table
   const [modal, setModal] = useState(null); // {deal} or {deal:null}
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -2228,7 +2252,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
       const credited = await maybeCreditAppt(saved, prev?.stage);
       if (credited && !saved.apptCredited) await api.updateDeal(saved.id, { apptCredited: true });
     } else {
-      const created = await api.upsertDeal({ ...data, ownerId: liveUser.id });
+      const created = await api.upsertDeal({ ...data, ownerId: data.ownerId || liveUser.id });
       const credited = await maybeCreditAppt(created, null);
       if (credited) await api.updateDeal(created.id, { apptCredited: true });
     }
@@ -2365,6 +2389,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: s.color + "18", color: s.color, borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
                           <span style={{ width: 7, height: 7, borderRadius: "50%", background: s.color }} />{s.label}
                         </span>
+                        {d.stage === "lost" && d.lostReason && <div style={{ fontSize: 11.5, opacity: 0.6, marginTop: 4 }}>{d.lostReason}</div>}
                       </td>
                       <td style={{ padding: "12px 16px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtMoney(d.value)}</td>
                       <td style={{ padding: "12px 16px", opacity: 0.7, whiteSpace: "nowrap" }}>{d.closeDate ? new Date(d.closeDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</td>
@@ -2390,21 +2415,29 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 
       {modal && (
         <DealModal deal={modal.deal} onSave={upsertDeal} onDelete={removeDeal} onClose={() => setModal(null)}
-          liveUser={liveUser} salesReps={users.filter((u) => u.role === "sales")} />
+          liveUser={liveUser} salesReps={users.filter((u) => u.role === "sales")}
+          assignableOwners={repUsers} />
       )}
     </>
   );
 }
 
-function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps }) {
+function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners }) {
   const isBDR = liveUser && liveUser.role === "bdr";
-  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", taggedRepId: isBDR ? "" : "self" });
+  const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "manager");
+  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
+  const owners = assignableOwners || [];
   const submit = () => {
     if (!f.company.trim()) { setErr("Company / prospect name is required."); return; }
     if (isBDR && !f.taggedRepId) { setErr("Please choose who you're working for."); return; }
+    // Admins/managers must pick an owner when creating a brand-new deal.
+    if (isAdminMgr && !deal && !f.ownerId) { setErr("Please choose which rep owns this deal."); return; }
+    if (f.stage === "lost" && !String(f.lostReason || "").trim()) { setErr("Please choose a reason for the loss."); return; }
     const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), value: +f.value || 0, taggedRepId, ...(deal ? { id: deal.id } : {}) });
+    // Clear the lost reason if the deal isn't actually lost.
+    const lostReason = f.stage === "lost" ? String(f.lostReason || "").trim() : "";
+    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal ? { id: deal.id } : {}) });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
@@ -2414,6 +2447,18 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps }) {
           <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
         </div>
         <Field label="Company / prospect"><input value={f.company} onChange={(e) => setF({ ...f, company: e.target.value })} style={inputStyle} placeholder="Acme Corp" autoFocus /></Field>
+        {isAdminMgr && (
+          <Field label="Deal owner">
+            <div style={{ position: "relative" }}>
+              <select value={f.ownerId || ""} onChange={(e) => { setF({ ...f, ownerId: e.target.value }); setErr(""); }}
+                style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                <option value="" disabled>Choose the rep who owns this…</option>
+                {owners.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </Field>
+        )}
         {isBDR && (
           <Field label="Tellemica Sales Rep">
             <div style={{ position: "relative" }}>
@@ -2444,6 +2489,18 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps }) {
           <div style={{ background: CYAN + "14", color: "#0B6A8C", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, marginBottom: 12 }}>
             Setting this to "Appointment Set" will credit 1 appointment to the owner's activity stats.
           </div>
+        )}
+        {f.stage === "lost" && (
+          <Field label="Reason for loss">
+            <div style={{ position: "relative" }}>
+              <select value={f.lostReason || ""} onChange={(e) => { setF({ ...f, lostReason: e.target.value }); setErr(""); }}
+                style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                <option value="" disabled>Choose a reason…</option>
+                {LOST_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </Field>
         )}
         <Field label="Notes (optional)"><textarea rows={3} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} placeholder="Next steps, context, objections…" /></Field>
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
