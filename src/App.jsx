@@ -1198,7 +1198,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
       Emails: e.emails || 0,
       Appointments: e.appts || 0,
       "Logged by": nameOf(e.userId),
-      "Working for": repOf(e),
+      "Tellemica Sales Rep": repOf(e),
       Notes: e.notes || "",
     }));
     const ws = XLSX.utils.json_to_sheet(data);
@@ -1215,7 +1215,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   const cols = [
     ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["fan", "FAN"], ["contact", "Contact"],
     ["phone", "Phone"], ["email", "Email"], ["calls", "Calls"], ["emails", "Emails"],
-    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Working for"], ["notes", "Notes"],
+    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Tellemica Sales Rep"], ["notes", "Notes"],
   ];
   const sortable = new Set(["date", "company", "calls", "emails", "appts", "logged", "rep"]);
 
@@ -1979,7 +1979,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 760 }}>
               <thead>
                 <tr style={{ background: "#F1F5F9" }}>
-                  {["", "Date", "Company", "Calls", "Emails", "Appts", "Working for", "Owner"].map((h) => (
+                  {["", "Date", "Company", "Calls", "Emails", "Appts", "Tellemica Sales Rep", "Owner"].map((h) => (
                     <th key={h} style={{ textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
                 </tr>
@@ -2011,7 +2011,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -2046,9 +2046,10 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       company: form.company.trim(), ban: form.ban.trim(), fan: form.fan.trim(), contact: form.contact.trim(),
       phone: form.phone.trim(), email: form.email.trim(),
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
+      carrierRep: form.carrierRep.trim(),
       taggedRepId,
     }));
-    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "" });
+    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
 
@@ -2065,7 +2066,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "0 0 4px" }}>Log a session</h2>
         <p style={{ margin: "0 0 20px", fontSize: 13.5, opacity: 0.55 }}>Logging as <b>{liveUser.name}</b> · {ROLES[liveUser.role].label}</p>
         {isBDR && (
-          <Field label="Working for">
+          <Field label="Tellemica Sales Rep">
             <div style={{ position: "relative" }}>
               <select value={form.workingFor} onChange={(e) => { setForm({ ...form, workingFor: e.target.value }); setErr(""); }}
                 style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
@@ -2102,6 +2103,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
+        <Field label="Carrier Rep (AT&T, VZW, TMo)"><input value={form.carrierRep} onChange={(e) => setForm({ ...form, carrierRep: e.target.value })} style={inputStyle} placeholder="Name of carrier rep" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
           <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
@@ -2377,7 +2379,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps }) {
         </div>
         <Field label="Company / prospect"><input value={f.company} onChange={(e) => setF({ ...f, company: e.target.value })} style={inputStyle} placeholder="Acme Corp" autoFocus /></Field>
         {isBDR && (
-          <Field label="Working for">
+          <Field label="Tellemica Sales Rep">
             <div style={{ position: "relative" }}>
               <select value={f.taggedRepId} onChange={(e) => { setF({ ...f, taggedRepId: e.target.value }); setErr(""); }}
                 style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
