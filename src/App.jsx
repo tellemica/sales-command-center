@@ -1214,12 +1214,24 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
     XLSX.writeFile(wb, `tellemica-activity-${stamp}.xlsx`);
   };
 
-  const cols = [
-    ["date", "Date"], ["company", "Company"], ["ban", "BAN"], ["fan", "FAN"], ["contact", "Contact"],
-    ["phone", "Phone"], ["email", "Email"], ["calls", "Calls"], ["emails", "Emails"],
-    ["appts", "Appts"], ["logged", "Logged by"], ["rep", "Tellemica Sales Rep"], ["carrier", "Carrier Rep"], ["notes", "Notes"],
+  // Columns always visible in the collapsed row. Everything else lives in the
+  // expand panel so nothing gets pushed off-screen. "rep" hides on narrow screens.
+  const headCols = [
+    ["date", "Date", false],
+    ["company", "Company", false],
+    ["calls", "Calls", true],
+    ["emails", "Emails", true],
+    ["appts", "Appts", true],
+    ["logged", "Logged by", false],
+    ["rep", "Tellemica Sales Rep", false],
   ];
-  const sortable = new Set(["date", "company", "calls", "emails", "appts", "logged", "rep", "carrier"]);
+
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (id) => setOpen((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const cellPad = "11px 14px";
+  const kvLabel = { fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6" };
+  const kvValue = { fontSize: 13.5 };
 
   return (
     <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
@@ -1235,12 +1247,13 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
         </button>
       </div>
       <div style={{ overflowX: "auto", maxHeight: compact ? 420 : "none" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: "#F1F5F9", position: "sticky", top: 0, zIndex: 1 }}>
-              {cols.map(([k, label]) => (
-                <th key={k} onClick={() => sortable.has(k) && setSort(k)}
-                  style={{ textAlign: (["calls", "emails", "appts"].includes(k)) ? "center" : "left", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: sortable.has(k) ? "pointer" : "default", borderBottom: `1px solid ${LINE_C}` }}>
+              <th style={{ width: 34, borderBottom: `1px solid ${LINE_C}` }} />
+              {headCols.map(([k, label, isNum]) => (
+                <th key={k} onClick={() => setSort(k)}
+                  style={{ textAlign: isNum ? "center" : "left", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer", borderBottom: `1px solid ${LINE_C}` }}>
                   {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                 </th>
               ))}
@@ -1248,27 +1261,47 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={cols.length} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No activity records yet.</td></tr>
-            ) : rows.map((e) => (
-              <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.date}</td>
-                <td style={{ padding: "9px 12px", fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {e.company ? (onOpenCompany ? <button onClick={() => onOpenCompany(e.companyId, e.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{e.company}</button> : e.company) : "—"}
-                </td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.ban || "—"}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.fan || "—"}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.contact || "—"}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.phone || "—"}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.email || "—"}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.calls || 0}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.emails || 0}</td>
-                <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.appts || 0}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{nameOf(e.userId)}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{repOf(e)}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{e.carrierRep || "—"}</td>
-                <td style={{ padding: "9px 12px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.notes || ""}>{e.notes || "—"}</td>
-              </tr>
-            ))}
+              <tr><td colSpan={headCols.length + 1} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No activity records yet.</td></tr>
+            ) : rows.map((e) => {
+              const isOpen = open.has(e.id);
+              return (
+                <React.Fragment key={e.id}>
+                  <tr onClick={() => toggle(e.id)} className="tap"
+                    style={{ borderBottom: isOpen ? "none" : `1px solid ${LINE_C}`, cursor: "pointer", background: isOpen ? "#F8FAFC" : "transparent" }}>
+                    <td style={{ padding: cellPad, textAlign: "center" }}>
+                      <ChevronRight size={15} style={{ opacity: 0.5, transition: "transform .15s ease", transform: isOpen ? "rotate(90deg)" : "none" }} />
+                    </td>
+                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{e.date}</td>
+                    <td style={{ padding: cellPad, fontWeight: 600, whiteSpace: "nowrap" }}>
+                      {e.company ? (onOpenCompany ? <button onClick={(ev) => { ev.stopPropagation(); onOpenCompany(e.companyId, e.company); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{e.company}</button> : e.company) : "—"}
+                    </td>
+                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.calls || 0}</td>
+                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.emails || 0}</td>
+                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.appts || 0}</td>
+                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{nameOf(e.userId) || "—"}</td>
+                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{repOf(e)}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr style={{ borderBottom: `1px solid ${LINE_C}`, background: "#F8FAFC" }}>
+                      <td colSpan={headCols.length + 1} style={{ padding: 0 }}>
+                        <div style={{ padding: "6px 22px 18px 48px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px 28px" }}>
+                          <div><div style={kvLabel}>BAN</div><div style={kvValue}>{e.ban || "—"}</div></div>
+                          <div><div style={kvLabel}>FAN</div><div style={kvValue}>{e.fan || "—"}</div></div>
+                          <div><div style={kvLabel}>Contact</div><div style={kvValue}>{e.contact || "—"}</div></div>
+                          <div><div style={kvLabel}>Phone</div><div style={kvValue}>{e.phone || "—"}</div></div>
+                          <div><div style={kvLabel}>Email</div><div style={kvValue}>{e.email || "—"}</div></div>
+                          <div>
+                            <div style={kvLabel}>Carrier Rep</div>
+                            <div style={kvValue}>{e.carrierRep ? <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, background: "#E7F0FF", color: EMAIL }}>{e.carrierRep}</span> : "—"}</div>
+                          </div>
+                          <div style={{ gridColumn: "1 / -1" }}><div style={kvLabel}>Notes</div><div style={kvValue}>{e.notes || "—"}</div></div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
