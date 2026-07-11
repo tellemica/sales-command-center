@@ -12,10 +12,10 @@ import { supabase } from "./supabaseClient";
 
 const toCamelProfile = (p) => p && ({ id: p.id, name: p.name, email: p.email, role: p.role, managerId: p.manager_id });
 const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", fan: e.fan || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "", carrierRep: e.carrier_rep || "", companyId: e.company_id || "" });
-const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, value: Number(d.value), stage: d.stage, closeDate: d.close_date || "", notes: d.notes, apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "", companyId: d.company_id || "" });
+const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, value: Number(d.value), stage: d.stage, closeDate: d.close_date || "", notes: d.notes, lostReason: d.lost_reason || "", apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "", companyId: d.company_id || "" });
 
 const fromCamelEntry = (e) => ({ ...(e.id ? { id: e.id } : {}), user_id: e.userId, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, from_deal: e.fromDeal ?? null, tagged_rep_id: e.taggedRepId || null, company: e.company || null, ban: e.ban || null, fan: e.fan || null, contact: e.contact || null, phone: e.phone || null, email: e.email || null, carrier_rep: e.carrierRep || null, company_id: e.companyId || null });
-const fromCamelDeal = (d) => ({ ...(d.id ? { id: d.id } : {}), owner_id: d.ownerId, company: d.company, contact: d.contact, value: d.value, stage: d.stage, close_date: d.closeDate || null, notes: d.notes, appt_credited: d.apptCredited ?? false, tagged_rep_id: d.taggedRepId || null, company_id: d.companyId || null });
+const fromCamelDeal = (d) => ({ ...(d.id ? { id: d.id } : {}), owner_id: d.ownerId, company: d.company, contact: d.contact, value: d.value, stage: d.stage, close_date: d.closeDate || null, notes: d.notes, lost_reason: d.lostReason || null, appt_credited: d.apptCredited ?? false, tagged_rep_id: d.taggedRepId || null, company_id: d.companyId || null });
 
 // ---- Auth ----
 export async function signIn(email, password) {
