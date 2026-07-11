@@ -2218,7 +2218,7 @@ function Pill({ icon: Icon, color, n }) {
 // ---- Pipeline (CRM) ----
 function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds, entries, saveEntries }) {
   const role = liveUser.role;
-  const canEdit = role === "bdr" || role === "sales" || role === "admin" || role === "manager"; // reps own deals; admins/managers can also manage
+  const canEdit = role === "bdr" || role === "sales" || role === "admin" || role === "management"; // reps own deals; admins/managers can also manage
   const [mode, setMode] = useState("board"); // board | table
   const [modal, setModal] = useState(null); // {deal} or {deal:null}
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -2424,7 +2424,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 
 function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners }) {
   const isBDR = liveUser && liveUser.role === "bdr";
-  const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "manager");
+  const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
   const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
