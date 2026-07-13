@@ -99,7 +99,8 @@ const followUpState = (dateStr) => {
 const STAGE_STALE_DAYS = { new: 14, contacted: 21, appointment: 30, proposal: 30 };
 const dealAge = (deal) => {
   if (deal.stage === "won" || deal.stage === "lost") return null;
-  const age = daysSince(deal.createdAt);
+  // Prefer time in current stage; fall back to creation date for legacy deals.
+  const age = daysSince(deal.stageChangedAt || deal.createdAt);
   if (age === null) return null;
   const threshold = STAGE_STALE_DAYS[deal.stage] || 30;
   return { age, stale: age >= threshold, threshold };
@@ -145,6 +146,7 @@ export default function App() {
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const [view, setView] = useState("dashboard");
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [companies, setCompanies] = useState([]);
   const [leads, setLeads] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
@@ -250,6 +252,15 @@ export default function App() {
   const visibleEntries = entries.filter(canSeeEntry);
   const visibleDeals = deals.filter(canSeeDeal);
 
+  // Count overdue/due-today follow-ups across visible deals + scoped leads, for the nav badge & login nudge.
+  const scopedLeads = leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id);
+  const dueCount = (() => {
+    let n = 0;
+    visibleDeals.forEach((d) => { if (d.nextActionDate && d.stage !== "won" && d.stage !== "lost" && daysUntil(d.nextActionDate) <= 0) n++; });
+    scopedLeads.forEach((l) => { if (l.nextActionDate && !["Won", "Lost", "Dead"].includes(l.status) && daysUntil(l.nextActionDate) <= 0) n++; });
+    return n;
+  })();
+
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
   nav.push(["companies", "Companies", Building2]);
@@ -299,6 +310,9 @@ export default function App() {
                   style={{ display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13.5, fontWeight: 500, whiteSpace: "nowrap",
                     background: view === id ? PAPER : "transparent", color: view === id ? INK : PAPER }}>
                   <Icon size={15} /> {label}
+                  {id === "followups" && dueCount > 0 && (
+                    <span style={{ background: "#B4453F", color: "#fff", fontSize: 10.5, fontWeight: 700, borderRadius: 99, padding: "1px 6px", minWidth: 17, textAlign: "center", lineHeight: 1.5 }}>{dueCount}</span>
+                  )}
                 </button>
               ))}
             </nav>
@@ -349,6 +363,16 @@ export default function App() {
         </div>
       )}
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
+        {dueCount > 0 && !nudgeDismissed && view !== "followups" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#FFF4E5", border: "1px solid #F3D9B0", borderRadius: 12, padding: "12px 16px", marginBottom: 18 }}>
+            <Clock size={18} color="#B7791F" style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13.5, color: "#8A6D3B" }}>
+              You have <b>{dueCount}</b> follow-up{dueCount > 1 ? "s" : ""} due or overdue.
+            </div>
+            <button onClick={() => setView("followups")} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>Review</button>
+            <button onClick={() => setNudgeDismissed(true)} className="tap" title="Dismiss" style={{ background: "transparent", border: "none", color: "#8A6D3B", cursor: "pointer", display: "flex", alignItems: "center", padding: 4 }}><X size={16} /></button>
+          </div>
+        )}
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
             leads={leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id)}
@@ -2032,7 +2056,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   const [done, setDone] = useState("");
   const fileRef = React.useRef(null);
 
-  const TEMPLATE_COLS = ["Date", "Company", "BAN", "FAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Prospecting For", "BDR/Sale Rep [You]", "Notes"];
+  const TEMPLATE_COLS = ["Date", "Company", "BAN", "FAN", "Contact", "Phone", "Email", "Calls", "Emails", "Appointments", "Prospecting For", "BDR/Sale Rep [You]", "Notes", "Carrier Rep"];
 
   const downloadTemplate = async () => {
     const N = 2000; // rows the dropdowns cover
@@ -2040,10 +2064,11 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
       Date: TODAY_US(), Company: "Acme Corp", BAN: "123456789", FAN: "987654321", Contact: "Jane Smith",
       Phone: "(610) 555-0100", Email: "jane@acme.com", Calls: 0, Emails: 0, Appointments: 0,
       "Prospecting For": "Self-generated", "BDR/Sale Rep [You]": liveUser.name, Notes: "Intro call, follow up next week",
+      "Carrier Rep": "John Doe (AT&T)",
     };
     const blank = Object.fromEntries(TEMPLATE_COLS.map((c) => [c, ""]));
     const ws = XLSX.utils.json_to_sheet([example, blank], { header: TEMPLATE_COLS });
-    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 22 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 34 }, { wch: 20 }];
     // Force the Date column (A) to display MM-DD-YYYY for any date the user types.
     for (let row = 2; row <= 2001; row++) {
       const addr = `A${row}`;
@@ -2195,6 +2220,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
         ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(), contact: String(r["Contact"] || "").trim(),
         phone: String(r["Phone"] || "").trim(), email: String(r["Email"] || "").trim(),
         calls, emails, appts, notes: String(r["Notes"] || "").trim(),
+        carrierRep: String(r["Carrier Rep"] || "").trim(),
         ownerName: (assignable.find((u) => u.id === userId) || {}).name || liveUser.name,
         repName: taggedRepId ? (salesReps.find((s) => s.id === taggedRepId) || {}).name : "Self-generated",
       };
@@ -2212,7 +2238,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
       await saveEntries(() => api.addEntriesBulk(valid.map((r) => ({
         userId: r.userId, date: r.date, company: r.company, ban: r.ban, fan: r.fan, contact: r.contact,
         phone: r.phone, email: r.email, calls: r.calls, emails: r.emails, appts: r.appts,
-        notes: r.notes, taggedRepId: r.taggedRepId,
+        notes: r.notes, taggedRepId: r.taggedRepId, carrierRep: r.carrierRep,
       }))));
       setDone(`Imported ${valid.length} ${valid.length === 1 ? "record" : "records"}.`);
       setRows(null); setFileName("");
@@ -2499,15 +2525,19 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
   const upsertDeal = (data) => saveDeals(async () => {
     if (data.id) {
       const prev = allDeals.find((d) => d.id === data.id);
-      const merged = { ...prev, ...data };
+      const stageChanged = prev && data.stage && data.stage !== prev.stage;
+      const merged = { ...prev, ...data, ...(stageChanged ? { stageChangedAt: new Date().toISOString() } : {}) };
       // Save the deal first so we have an id, then handle credit + credited flag.
       const saved = await api.upsertDeal(merged);
       const credited = await maybeCreditAppt(saved, prev?.stage);
       if (credited && !saved.apptCredited) await api.updateDeal(saved.id, { apptCredited: true });
+      // Best-effort history log — never let it block the save.
+      if (stageChanged) { try { await api.logStageChange(saved.id, prev.stage, saved.stage); } catch { /* ignore */ } }
     } else {
-      const created = await api.upsertDeal({ ...data, ownerId: data.ownerId || liveUser.id });
+      const created = await api.upsertDeal({ ...data, ownerId: data.ownerId || liveUser.id, stageChangedAt: new Date().toISOString() });
       const credited = await maybeCreditAppt(created, null);
       if (credited) await api.updateDeal(created.id, { apptCredited: true });
+      try { await api.logStageChange(created.id, null, created.stage); } catch { /* ignore */ }
     }
   }).then(() => setModal(null));
 
@@ -2515,9 +2545,10 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
     const prev = allDeals.find((d) => d.id === dealId);
     if (!prev || prev.stage === newStage) return;
     return saveDeals(async () => {
-      const saved = await api.updateDeal(dealId, { ...prev, stage: newStage });
+      const saved = await api.updateDeal(dealId, { ...prev, stage: newStage, stageChangedAt: new Date().toISOString() });
       const credited = await maybeCreditAppt(saved, prev.stage);
       if (credited && !saved.apptCredited) await api.updateDeal(dealId, { apptCredited: true });
+      try { await api.logStageChange(dealId, prev.stage, newStage); } catch { /* ignore */ }
     });
   };
 
@@ -2611,7 +2642,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
                         return (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
                             {fu && <span style={{ fontSize: 10.5, fontWeight: 600, color: fu.color, background: fu.color + "16", borderRadius: 5, padding: "2px 6px" }}>⏱ {fu.label}</span>}
-                            {ag && ag.stale && <span style={{ fontSize: 10.5, fontWeight: 600, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 5, padding: "2px 6px" }}>⚠ Stale · {ag.age}d</span>}
+                            {ag && ag.stale && <span style={{ fontSize: 10.5, fontWeight: 600, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 5, padding: "2px 6px" }}>⚠ {ag.age}d in stage</span>}
                           </div>
                         );
                       })()}
@@ -2691,6 +2722,14 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
   const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
+  const [history, setHistory] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    if (deal?.id) {
+      api.listStageHistory(deal.id).then((h) => { if (alive) setHistory(h); }).catch(() => { if (alive) setHistory([]); });
+    }
+    return () => { alive = false; };
+  }, [deal?.id]);
   const submit = () => {
     if (!f.company.trim()) { setErr("Company / prospect name is required."); return; }
     if (isBDR && !f.taggedRepId) { setErr("Please choose who you're working for."); return; }
@@ -2767,6 +2806,20 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
           </Field>
         )}
         <Field label="Notes (optional)"><textarea rows={3} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} placeholder="Next steps, context, objections…" /></Field>
+        {deal && history && history.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Stage history</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {history.map((h) => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: STAGE[h.toStage]?.color || "#8494A6", flexShrink: 0 }} />
+                  <span style={{ fontWeight: 600 }}>{h.fromStage ? `${STAGE[h.fromStage]?.label || h.fromStage} → ` : "Created as "}{STAGE[h.toStage]?.label || h.toStage}</span>
+                  <span style={{ opacity: 0.5, marginLeft: "auto" }}>{new Date(h.changedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={submit} className="tap"
