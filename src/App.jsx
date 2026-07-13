@@ -5,7 +5,7 @@ import {
   Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
   ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
   UserPlus, Pencil, Eye, EyeOff, Briefcase, DollarSign, Kanban,
-  Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet, UserCheck
+  Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet, UserCheck, Clock, AlertTriangle
 } from "lucide-react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -79,6 +79,31 @@ const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]));
 const OPEN_STAGES = STAGES.filter((s) => s.id !== "won" && s.id !== "lost");
 // Reasons captured when a deal is marked Closed Lost — drives win/loss reporting.
 const LOST_REASONS = ["Price / budget", "Went with competitor", "Timing / no decision", "No response / went dark", "Not a fit", "Other"];
+
+// --- Follow-up & aging helpers ---
+const DAY_MS = 86400000;
+const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+// Days between a yyyy-mm-dd string and today (negative = in the past / overdue).
+const daysUntil = (dateStr) => { if (!dateStr) return null; const t = new Date(dateStr + "T00:00"); return Math.round((t - startOfToday()) / DAY_MS); };
+const daysSince = (isoStr) => { if (!isoStr) return null; return Math.round((startOfToday() - new Date(isoStr)) / DAY_MS); };
+// A follow-up is "due" if its date is today or earlier; label describes urgency.
+const followUpState = (dateStr) => {
+  const d = daysUntil(dateStr);
+  if (d === null) return null;
+  if (d < 0) return { label: `${Math.abs(d)}d overdue`, color: "#B4453F", due: true };
+  if (d === 0) return { label: "Due today", color: "#C2410C", due: true };
+  if (d <= 3) return { label: `Due in ${d}d`, color: "#B7791F", due: false };
+  return { label: `Due ${new Date(dateStr + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, color: "#5A6B7B", due: false };
+};
+// Stale = open deal untouched (by created date proxy) longer than the stage threshold.
+const STAGE_STALE_DAYS = { new: 14, contacted: 21, appointment: 30, proposal: 30 };
+const dealAge = (deal) => {
+  if (deal.stage === "won" || deal.stage === "lost") return null;
+  const age = daysSince(deal.createdAt);
+  if (age === null) return null;
+  const threshold = STAGE_STALE_DAYS[deal.stage] || 30;
+  return { age, stale: age >= threshold, threshold };
+};
 const fmtMoney = (n) => "$" + (n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 // Tellemica logo lockup. `wordmark` renders the letter-spaced uppercase treatment
@@ -231,6 +256,7 @@ export default function App() {
   nav.push(["leads", "Leads", UserCheck]);
   nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
+  nav.push(["followups", "Follow-ups", Clock]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
   if (isAdmin) nav.push(["admin", "Admin Portal", Shield]);
 
@@ -325,6 +351,7 @@ export default function App() {
       <main style={{ maxWidth: 1120, margin: "0 auto", padding: "26px 24px 60px" }}>
         {view === "dashboard" && (
           <Dashboard entries={visibleEntries} deals={visibleDeals} users={users} goals={goals} saveGoals={saveGoals}
+            leads={leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id)}
             userGoals={userGoals} liveUser={effectiveUser} visibleUserIds={visibleUserIds} setView={setView} canLog={canLog}
             onOpenCompany={(id, name) => id ? openCompanyById(id) : openCompanyByName(name)} />
         )}
@@ -335,6 +362,10 @@ export default function App() {
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
             liveUser={effectiveUser} users={users} visibleUserIds={visibleUserIds}
             entries={entries} saveEntries={saveEntries} />
+        )}
+        {view === "followups" && (
+          <FollowUpsView deals={visibleDeals} leads={leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id)}
+            users={users} liveUser={effectiveUser} setView={setView} />
         )}
         {view === "companies" && (
           selectedCompanyId ? (
@@ -967,7 +998,6 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inputStyle} /></Field>
                 <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
                 <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
-                <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
               </div>
               <Field label="Description / overview"><textarea rows={3} value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
@@ -984,7 +1014,6 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <InfoRow label="Phone" value={company.phone} />
                 <InfoRow label="BAN" value={company.ban} />
                 <InfoRow label="FAN" value={company.fan} />
-                <InfoRow label="FAN" value={company.fan} />
                 <InfoRow label="Address" value={company.address} />
               </div>
               {company.notes && <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 14px", opacity: 0.85 }}>{company.notes}</p>}
@@ -994,7 +1023,38 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
         </Panel>
       )}
 
-      {/* ACTIVITIES */}
+      {tab === "overview" && (() => {
+        // Interleave activities and deals into one chronological account story.
+        const events = [];
+        companyEntries.forEach((e) => {
+          const bits = [];
+          if (e.calls) bits.push(`${e.calls} call${e.calls > 1 ? "s" : ""}`);
+          if (e.emails) bits.push(`${e.emails} email${e.emails > 1 ? "s" : ""}`);
+          if (e.appts) bits.push(`${e.appts} appt${e.appts > 1 ? "s" : ""}`);
+          events.push({ date: e.date, kind: "activity", who: nameOf(e.userId), summary: bits.join(" · ") || "Activity logged", detail: e.notes });
+        });
+        companyDeals.forEach((d) => {
+          events.push({ date: (d.createdAt || "").slice(0, 10), kind: "deal", who: nameOf(d.ownerId), summary: `Deal · ${STAGE[d.stage]?.label || d.stage}${d.value ? ` · ${fmtMoney(d.value)}` : ""}`, detail: d.stage === "lost" && d.lostReason ? `Lost: ${d.lostReason}` : d.notes });
+        });
+        const sorted = events.filter((e) => e.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+        if (sorted.length === 0) return null;
+        return (
+          <Panel title="Account timeline" icon={Clock} style={{ marginTop: 16 }}>
+            <div style={{ display: "grid", gap: 2 }}>
+              {sorted.map((ev, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, padding: "10px 0", borderTop: i ? `1px solid ${LINE_C}` : "none" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", marginTop: 5, flexShrink: 0, background: ev.kind === "deal" ? EMAIL : CALL }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>{ev.summary}</div>
+                    {ev.detail && <div style={{ fontSize: 12.5, opacity: 0.65, marginTop: 2 }}>{ev.detail}</div>}
+                    <div style={{ fontSize: 11.5, opacity: 0.5, marginTop: 2 }}>{new Date(ev.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} · {ev.who}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        );
+      })()}
       {tab === "activities" && <ActivityTable entries={companyEntries} users={users} liveUser={effectiveUser} />}
 
       {/* DEALS */}
@@ -1311,7 +1371,79 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   );
 }
 
-function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUser, visibleUserIds, setView, canLog, onOpenCompany }) {
+function FollowUpsView({ deals, leads, users, liveUser, setView }) {
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+
+  // Build a unified list of follow-up items from deals and leads that have a next-action date.
+  const items = [];
+  (deals || []).forEach((d) => {
+    if (d.nextActionDate && d.stage !== "won" && d.stage !== "lost") {
+      items.push({ kind: "Deal", id: d.id, company: d.company, who: nameOf(d.ownerId), date: d.nextActionDate, sub: STAGE[d.stage]?.label || d.stage, value: d.value });
+    }
+  });
+  (leads || []).forEach((l) => {
+    if (l.nextActionDate && l.status !== "Won" && l.status !== "Lost" && l.status !== "Dead") {
+      items.push({ kind: "Lead", id: l.id, company: l.company, who: nameOf(l.assignedTo) || "Unassigned", date: l.nextActionDate, sub: l.status });
+    }
+  });
+  items.sort((a, b) => a.date.localeCompare(b.date));
+
+  const overdue = items.filter((i) => daysUntil(i.date) < 0);
+  const today = items.filter((i) => daysUntil(i.date) === 0);
+  const soon = items.filter((i) => { const d = daysUntil(i.date); return d > 0 && d <= 7; });
+  const later = items.filter((i) => daysUntil(i.date) > 7);
+
+  const Section = ({ title, list, accent }) => list.length === 0 ? null : (
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ width: 9, height: 9, borderRadius: "50%", background: accent }} />
+        <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: INK }}>{title}</h3>
+        <span style={{ fontSize: 12.5, opacity: 0.5 }}>({list.length})</span>
+      </div>
+      <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 12, overflow: "hidden" }}>
+        {list.map((i, idx) => {
+          const fu = followUpState(i.date);
+          return (
+            <div key={i.kind + i.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: idx ? `1px solid ${LINE_C}` : "none" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: i.kind === "Deal" ? EMAIL : CALL, background: (i.kind === "Deal" ? EMAIL : CALL) + "14", borderRadius: 5, padding: "3px 7px", flexShrink: 0 }}>{i.kind}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{i.company}</div>
+                <div style={{ fontSize: 12, opacity: 0.55 }}>{i.sub} · {i.who}{i.value ? ` · ${fmtMoney(i.value)}` : ""}</div>
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 600, color: fu.color, whiteSpace: "nowrap", flexShrink: 0 }}>{fu.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Follow-ups</h1>
+        <p style={{ fontSize: 14, opacity: 0.6, margin: "4px 0 0" }}>Deals and leads with a next-action date, sorted by urgency.</p>
+      </div>
+      {items.length === 0 ? (
+        <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 40, textAlign: "center" }}>
+          <Clock size={30} color="#B7C2CE" style={{ marginBottom: 10 }} />
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Nothing scheduled</div>
+          <p style={{ fontSize: 13.5, opacity: 0.6, margin: "0 0 16px" }}>Add a "next action" date to a deal or lead and it'll show up here.</p>
+          <button onClick={() => setView("pipeline")} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Go to Pipeline</button>
+        </div>
+      ) : (
+        <>
+          <Section title="Overdue" list={overdue} accent="#B4453F" />
+          <Section title="Due today" list={today} accent="#C2410C" />
+          <Section title="Next 7 days" list={soon} accent="#B7791F" />
+          <Section title="Later" list={later} accent="#5A6B7B" />
+        </>
+      )}
+    </div>
+  );
+}
+
+function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, liveUser, visibleUserIds, setView, canLog, onOpenCompany }) {
   const role = liveUser.role;
   const scopeUsers = users.filter((u) => visibleUserIds.includes(u.id));
   const repUsers = scopeUsers.filter((u) => u.role === "bdr" || u.role === "sales");
@@ -1456,7 +1588,8 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
         <StatCard icon={TrendingUp} color={INK} label="Total Outreach" value={outreach} sub={`${scoped.length ? (outreach / scoped.length).toFixed(0) : 0} avg/session`} />
       </div>
 
-      <GoalBars totals={totals} targets={targets} isTeam={repFilter === "all" && role !== "bdr"} />
+      <GoalBars totals={totals} targets={targets} isTeam={repFilter === "all" && role !== "bdr"}
+        pace={isCurrentMonth ? (() => { const now = new Date(); const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); return now.getDate() / dim; })() : null} />
 
       <div className="charts" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, marginTop: 16 }}>
         <Panel title={`Activity — ${monthLabel(month)}${isCurrentMonth ? " (MTD)" : ""}`}>
@@ -1489,6 +1622,31 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
         <StatCard icon={DollarSign} color="#16A34A" label="Closed Won" value={fmtMoney(wonValue)} sub={`${wonDeals.length} won deals`} raw />
         <StatCard icon={Percent} color={APPT} label="Win Rate" value={`${winRate}%`} sub={`${closedCount} closed total`} raw />
       </div>
+      {(() => {
+        // Assemble due/overdue follow-ups from scoped deals + leads.
+        const fuItems = [];
+        (deals || []).forEach((d) => { if (d.nextActionDate && d.stage !== "won" && d.stage !== "lost") fuItems.push({ kind: "Deal", company: d.company, date: d.nextActionDate }); });
+        (leads || []).forEach((l) => { if (l.nextActionDate && !["Won", "Lost", "Dead"].includes(l.status)) fuItems.push({ kind: "Lead", company: l.company, date: l.nextActionDate }); });
+        const due = fuItems.filter((i) => daysUntil(i.date) <= 0).sort((a, b) => a.date.localeCompare(b.date));
+        const staleDeals = (deals || []).filter((d) => { const a = dealAge(d); return a && a.stale; });
+        if (due.length === 0 && staleDeals.length === 0) return null;
+        return (
+          <div style={{ background: "#FFF9F0", border: "1px solid #F0DFC0", borderRadius: 14, padding: "14px 18px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: due.length ? 10 : 0 }}>
+              <AlertTriangle size={16} color="#B7791F" />
+              <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0, color: "#8A6D3B" }}>Needs attention</h3>
+              <button onClick={() => setView("followups")} className="tap" style={{ marginLeft: "auto", background: "transparent", border: "none", color: EMAIL, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>View all →</button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {due.slice(0, 6).map((i, idx) => {
+                const fu = followUpState(i.date);
+                return <span key={idx} style={{ fontSize: 12, background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 7, padding: "5px 9px" }}><b style={{ color: fu.color }}>{fu.label}</b> · {i.company}</span>;
+              })}
+              {staleDeals.length > 0 && <span style={{ fontSize: 12, background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 7, padding: "5px 9px", color: "#8A6D3B" }}>⚠ {staleDeals.length} stale deal{staleDeals.length > 1 ? "s" : ""}</span>}
+            </div>
+          </div>
+        );
+      })()}
       <Panel title="Deals by stage">
         {openDeals.length + wonDeals.length + lostDeals.length === 0 ? (
           <Empty msg="No deals yet. Reps can add opportunities from the Pipeline tab." />
@@ -1573,10 +1731,76 @@ function Dashboard({ entries, deals, users, goals, saveGoals, userGoals, liveUse
         </Panel>
       )}
 
+      {showLeaderboard && <WeeklyDigest entries={entries} deals={deals} users={users} />}
+
       <div style={{ marginTop: 16 }}>
         <ActivityTable entries={scoped} users={users} liveUser={liveUser} compact onOpenCompany={onOpenCompany} />
       </div>
     </>
+  );
+}
+
+function WeeklyDigest({ entries, deals, users }) {
+  const [copied, setCopied] = useState(false);
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : "Unknown"; };
+
+  // Last 7 days window.
+  const since = new Date(); since.setDate(since.getDate() - 7); since.setHours(0, 0, 0, 0);
+  const sinceStr = since.toISOString().slice(0, 10);
+
+  const weekEntries = (entries || []).filter((e) => e.date >= sinceStr);
+  const t = weekEntries.reduce((a, e) => ({ calls: a.calls + (e.calls || 0), emails: a.emails + (e.emails || 0), appts: a.appts + (e.appts || 0) }), { calls: 0, emails: 0, appts: 0 });
+
+  const weekDeals = (deals || []).filter((d) => (d.createdAt || "").slice(0, 10) >= sinceStr);
+  const wonThisWeek = (deals || []).filter((d) => d.stage === "won" && (d.closeDate || "").slice(0, 10) >= sinceStr);
+  const lostThisWeek = (deals || []).filter((d) => d.stage === "lost" && (d.closeDate || "").slice(0, 10) >= sinceStr);
+
+  // Per-rep activity rollup.
+  const byRep = {};
+  weekEntries.forEach((e) => { const n = nameOf(e.userId); byRep[n] = byRep[n] || { calls: 0, emails: 0, appts: 0 }; byRep[n].calls += e.calls || 0; byRep[n].emails += e.emails || 0; byRep[n].appts += e.appts || 0; });
+
+  const buildText = () => {
+    const lines = [];
+    lines.push(`Tellemica — Weekly Summary (last 7 days)`);
+    lines.push(``);
+    lines.push(`Activity: ${t.calls} calls · ${t.emails} emails · ${t.appts} appointments`);
+    lines.push(`New deals: ${weekDeals.length} · Won: ${wonThisWeek.length} · Lost: ${lostThisWeek.length}`);
+    if (wonThisWeek.length) lines.push(`Wins: ${wonThisWeek.map((d) => `${d.company} (${fmtMoney(d.value)})`).join(", ")}`);
+    if (lostThisWeek.length) lines.push(`Losses: ${lostThisWeek.map((d) => `${d.company}${d.lostReason ? ` — ${d.lostReason}` : ""}`).join(", ")}`);
+    lines.push(``);
+    lines.push(`By rep:`);
+    Object.entries(byRep).sort((a, b) => b[1].appts - a[1].appts).forEach(([n, r]) => lines.push(`  ${n}: ${r.calls} calls, ${r.emails} emails, ${r.appts} appts`));
+    return lines.join("\n");
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(buildText()); setCopied(true); setTimeout(() => setCopied(false), 1800); }
+    catch { /* clipboard blocked; user can still read the panel */ }
+  };
+
+  const hasData = weekEntries.length > 0 || weekDeals.length > 0 || wonThisWeek.length > 0 || lostThisWeek.length > 0;
+
+  return (
+    <Panel title="This week's summary" style={{ marginTop: 16 }} icon={FileSpreadsheet}>
+      {!hasData ? (
+        <Empty msg="No activity or deal changes in the last 7 days." />
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginBottom: 14 }}>
+            <MiniStat label="Calls" value={t.calls} color={CALL} />
+            <MiniStat label="Emails" value={t.emails} color={EMAIL} />
+            <MiniStat label="Appts" value={t.appts} color={APPT} />
+            <MiniStat label="New deals" value={weekDeals.length} color={EMAIL} />
+            <MiniStat label="Won" value={wonThisWeek.length} color="#16A34A" />
+            <MiniStat label="Lost" value={lostThisWeek.length} color="#B4453F" />
+          </div>
+          <pre style={{ background: "#F1F5F9", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: 14, fontSize: 12.5, lineHeight: 1.6, whiteSpace: "pre-wrap", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", margin: "0 0 12px" }}>{buildText()}</pre>
+          <button onClick={copy} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+            {copied ? "Copied!" : "Copy summary"}
+          </button>
+        </>
+      )}
+    </Panel>
   );
 }
 
@@ -1729,7 +1953,7 @@ function GoalStat({ label, value, color }) {
   );
 }
 
-function GoalBars({ totals, targets, isTeam }) {
+function GoalBars({ totals, targets, isTeam, pace }) {
   const rows = [
     ["Calls", totals.calls, targets.calls, CALL],
     ["Emails", totals.emails, targets.emails, EMAIL],
@@ -1742,19 +1966,30 @@ function GoalBars({ totals, targets, isTeam }) {
           <Target size={16} color={INK} />
           <span style={{ fontSize: 14, fontWeight: 600 }}>{isTeam ? "Team monthly goals" : "Monthly goals"}</span>
         </div>
+        {pace != null && <span style={{ fontSize: 11.5, opacity: 0.5 }}>{Math.round(pace * 100)}% through the month</span>}
       </div>
       <div style={{ display: "grid", gap: 12 }}>
         {rows.map(([label, val, target, color]) => {
           const pct = Math.min(100, target ? (val / target) * 100 : 0);
+          // Expected progress by now if pacing evenly across the month.
+          const expected = pace != null && target ? target * pace : null;
+          const onPace = expected != null ? val >= expected : null;
+          const gap = expected != null ? Math.round(expected - val) : null;
           return (
             <div key={label}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
                 <span style={{ fontWeight: 500 }}>{label}</span>
                 <span style={{ opacity: 0.6 }}>{val.toLocaleString()} / {target.toLocaleString()}</span>
               </div>
-              <div style={{ height: 8, background: LINE_C, borderRadius: 99, overflow: "hidden" }}>
+              <div style={{ height: 8, background: LINE_C, borderRadius: 99, overflow: "hidden", position: "relative" }}>
                 <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99, transition: "width .4s ease" }} />
+                {pace != null && <div style={{ position: "absolute", top: -2, bottom: -2, left: `${Math.min(100, pace * 100)}%`, width: 2, background: INK, opacity: 0.35 }} title="Expected pace" />}
               </div>
+              {onPace != null && (
+                <div style={{ fontSize: 11.5, marginTop: 4, color: onPace ? "#16794C" : "#B4453F" }}>
+                  {onPace ? "On pace" : `${gap > 0 ? gap.toLocaleString() : 0} behind pace`}
+                </div>
+              )}
             </div>
           );
         })}
@@ -2125,6 +2360,24 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 22 }}>
         <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "0 0 4px" }}>Log a session</h2>
         <p style={{ margin: "0 0 20px", fontSize: 13.5, opacity: 0.55 }}>Logging as <b>{liveUser.name}</b> · {ROLES[liveUser.role].label}</p>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Quick fill</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            {[
+              { label: "+1 Call", apply: (f) => ({ ...f, calls: String((+f.calls || 0) + 1) }) },
+              { label: "+1 Email", apply: (f) => ({ ...f, emails: String((+f.emails || 0) + 1) }) },
+              { label: "+1 Appt", apply: (f) => ({ ...f, appts: String((+f.appts || 0) + 1) }) },
+              { label: "Left voicemail", apply: (f) => ({ ...f, calls: String((+f.calls || 0) + 1), notes: f.notes ? f.notes : "Left voicemail" }) },
+              { label: "Sent follow-up", apply: (f) => ({ ...f, emails: String((+f.emails || 0) + 1), notes: f.notes ? f.notes : "Sent follow-up email" }) },
+              { label: "Booked appt", apply: (f) => ({ ...f, appts: String((+f.appts || 0) + 1), notes: f.notes ? f.notes : "Booked appointment" }) },
+            ].map((p) => (
+              <button key={p.label} type="button" onClick={() => setForm((f) => p.apply(f))} className="tap"
+                style={{ background: "#F1F5F9", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 11px", fontSize: 12.5, fontWeight: 600, color: INK, cursor: "pointer" }}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {isBDR && (
           <Field label="Tellemica Sales Rep">
             <div style={{ position: "relative" }}>
@@ -2352,6 +2605,16 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
                         {ownerFilter === "all" && repUsers.length > 1 && <span style={{ fontSize: 10.5, opacity: 0.5 }}>{ownerName(d.ownerId).split(" ")[0]}</span>}
                       </div>
                       {d.closeDate && <div style={{ fontSize: 11, opacity: 0.5, marginTop: 5 }}>Close: {new Date(d.closeDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>}
+                      {(() => {
+                        const fu = followUpState(d.nextActionDate);
+                        const ag = dealAge(d);
+                        return (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                            {fu && <span style={{ fontSize: 10.5, fontWeight: 600, color: fu.color, background: fu.color + "16", borderRadius: 5, padding: "2px 6px" }}>⏱ {fu.label}</span>}
+                            {ag && ag.stale && <span style={{ fontSize: 10.5, fontWeight: 600, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 5, padding: "2px 6px" }}>⚠ Stale · {ag.age}d</span>}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ))}
                   {col.length === 0 && <div style={{ fontSize: 12, opacity: 0.3, textAlign: "center", padding: "12px 0" }}>—</div>}
@@ -2425,7 +2688,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners }) {
   const isBDR = liveUser && liveUser.role === "bdr";
   const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
-  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
+  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
   const submit = () => {
@@ -2477,6 +2740,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
           <Field label="Deal value ($)"><input type="number" min="0" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} style={inputStyle} placeholder="0" /></Field>
           <Field label="Expected close"><input type="date" value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} style={inputStyle} /></Field>
         </div>
+        <Field label="Next action / follow-up date"><input type="date" value={f.nextActionDate || ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={inputStyle} /></Field>
         <Field label="Stage">
           <div style={{ position: "relative" }}>
             <select value={f.stage} onChange={(e) => setF({ ...f, stage: e.target.value })} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
