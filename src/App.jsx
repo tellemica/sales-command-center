@@ -147,6 +147,7 @@ export default function App() {
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const [view, setView] = useState("dashboard");
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  const [search, setSearch] = useState("");
   const [companies, setCompanies] = useState([]);
   const [leads, setLeads] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
@@ -261,6 +262,20 @@ export default function App() {
     return n;
   })();
 
+  // Global search across companies, deals, and leads (scoped to what the user can see).
+  const searchResults = (() => {
+    const q = search.trim().toLowerCase();
+    if (q.length < 2) return null;
+    const hit = (s) => (s || "").toLowerCase().includes(q);
+    const cos = companies.filter((c) => hit(c.name) || hit(c.ban) || hit(c.fan) || hit(c.industry)).slice(0, 6)
+      .map((c) => ({ type: "Company", id: c.id, title: c.name, sub: c.industry || c.ban || "", onGo: () => { openCompanyById(c.id); setSearch(""); } }));
+    const dls = visibleDeals.filter((d) => hit(d.company) || hit(d.contact)).slice(0, 6)
+      .map((d) => ({ type: "Deal", id: d.id, title: d.company, sub: `${STAGE[d.stage]?.label || d.stage}${d.value ? ` · ${fmtMoney(d.value)}` : ""}`, onGo: () => { setView("pipeline"); setSearch(""); } }));
+    const lds = scopedLeads.filter((l) => hit(l.company) || hit(l.contact) || hit(l.email)).slice(0, 6)
+      .map((l) => ({ type: "Lead", id: l.id, title: l.company, sub: l.contact || l.status || "", onGo: () => { setView("leads"); setSearch(""); } }));
+    return [...cos, ...dls, ...lds];
+  })();
+
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
   nav.push(["companies", "Companies", Building2]);
@@ -268,6 +283,7 @@ export default function App() {
   nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
   nav.push(["followups", "Follow-ups", Clock]);
+  if (role !== "bdr") nav.push(["reports", "Reports", TrendingUp]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
   if (isAdmin) nav.push(["admin", "Admin Portal", Shield]);
 
@@ -349,6 +365,33 @@ export default function App() {
         </div>
       </header>
 
+      <div style={{ background: CARD, borderBottom: `1px solid ${LINE_C}`, padding: "10px 24px" }}>
+        <div style={{ maxWidth: 1120, margin: "0 auto", position: "relative" }}>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search companies, deals, leads…"
+            style={{ width: "100%", maxWidth: 420, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "9px 13px", fontSize: 13.5, outline: "none", background: "#F8FAFC" }}
+          />
+          {searchResults && (
+            <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, width: "100%", maxWidth: 420, background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 11, boxShadow: "0 12px 32px rgba(11,42,74,.14)", zIndex: 40, overflow: "hidden" }}>
+              {searchResults.length === 0 ? (
+                <div style={{ padding: 16, fontSize: 13, opacity: 0.55, textAlign: "center" }}>No matches for "{search}"</div>
+              ) : searchResults.map((r, i) => (
+                <button key={r.type + r.id} onClick={r.onGo} className="tap"
+                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "transparent", border: "none", borderTop: i ? `1px solid ${LINE_C}` : "none", padding: "10px 14px", cursor: "pointer" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: r.type === "Company" ? INK : r.type === "Deal" ? EMAIL : CALL, background: (r.type === "Company" ? INK : r.type === "Deal" ? EMAIL : CALL) + "14", borderRadius: 5, padding: "3px 7px", flexShrink: 0 }}>{r.type}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</span>
+                    {r.sub && <span style={{ display: "block", fontSize: 12, opacity: 0.55 }}>{r.sub}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
       {impersonating && (
         <div style={{ background: CYAN, color: INK, padding: "10px 24px" }}>
           <div style={{ maxWidth: 1120, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
@@ -390,6 +433,9 @@ export default function App() {
         {view === "followups" && (
           <FollowUpsView deals={visibleDeals} leads={leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id)}
             users={users} liveUser={effectiveUser} setView={setView} />
+        )}
+        {view === "reports" && role !== "bdr" && (
+          <ReportsView entries={visibleEntries} deals={visibleDeals} users={users} liveUser={effectiveUser} visibleUserIds={visibleUserIds} />
         )}
         {view === "companies" && (
           selectedCompanyId ? (
@@ -1391,6 +1437,150 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : "Unknown"; };
+  const months = buildMonthOptions().slice().reverse(); // oldest -> newest for trend charts
+
+  // --- Activity trends by month ---
+  const activityByMonth = months.map((mk) => {
+    const rows = entries.filter((e) => inMonth(e.date, mk));
+    return {
+      month: monthLabel(mk).replace(/ \d{4}$/, ""), // short label
+      Calls: rows.reduce((a, e) => a + (e.calls || 0), 0),
+      Emails: rows.reduce((a, e) => a + (e.emails || 0), 0),
+      Appts: rows.reduce((a, e) => a + (e.appts || 0), 0),
+    };
+  });
+
+  // --- Deal / win-rate trends by month (based on close date for won/lost) ---
+  const dealByMonth = months.map((mk) => {
+    const closedThis = deals.filter((d) => (d.stage === "won" || d.stage === "lost") && inMonth(d.closeDate, mk));
+    const won = closedThis.filter((d) => d.stage === "won");
+    const lost = closedThis.filter((d) => d.stage === "lost");
+    const created = deals.filter((d) => inMonth((d.createdAt || "").slice(0, 10), mk));
+    const rate = closedThis.length ? Math.round((won.length / closedThis.length) * 100) : 0;
+    return {
+      month: monthLabel(mk).replace(/ \d{4}$/, ""),
+      "New deals": created.length,
+      Won: won.length,
+      Lost: lost.length,
+      "Win %": rate,
+      "Won $": won.reduce((a, d) => a + (d.value || 0), 0),
+    };
+  });
+
+  // --- Per-rep comparison (all-time, within visible scope) ---
+  const repRows = users
+    .filter((u) => (u.role === "bdr" || u.role === "sales") && (!visibleUserIds || visibleUserIds.includes(u.id)))
+    .map((u) => {
+      const myEntries = entries.filter((e) => e.userId === u.id);
+      const myDeals = deals.filter((d) => d.ownerId === u.id || d.taggedRepId === u.id);
+      const won = myDeals.filter((d) => d.stage === "won");
+      const closed = myDeals.filter((d) => d.stage === "won" || d.stage === "lost");
+      return {
+        id: u.id, name: u.name, role: ROLES[u.role].label,
+        calls: myEntries.reduce((a, e) => a + (e.calls || 0), 0),
+        emails: myEntries.reduce((a, e) => a + (e.emails || 0), 0),
+        appts: myEntries.reduce((a, e) => a + (e.appts || 0), 0),
+        won: won.length,
+        wonValue: won.reduce((a, d) => a + (d.value || 0), 0),
+        winRate: closed.length ? Math.round((won.length / closed.length) * 100) : null,
+      };
+    })
+    .sort((a, b) => b.wonValue - a.wonValue);
+
+  const hasActivity = activityByMonth.some((m) => m.Calls || m.Emails || m.Appts);
+  const hasDeals = dealByMonth.some((m) => m["New deals"] || m.Won || m.Lost);
+
+  const axisStyle = { fontSize: 11, fill: "#8494A6" };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Reports</h1>
+        <p style={{ fontSize: 14, opacity: 0.6, margin: "4px 0 0" }}>Trends over time and rep comparison, across everything you can see.</p>
+      </div>
+
+      <Panel title="Activity over time" icon={TrendingUp}>
+        {!hasActivity ? <Empty msg="No activity recorded yet." /> : (
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={activityByMonth} margin={{ top: 8, right: 12, bottom: 4, left: -8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={LINE_C} />
+              <XAxis dataKey="month" tick={axisStyle} />
+              <YAxis tick={axisStyle} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="Calls" stroke={CALL} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Emails" stroke={EMAIL} strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Appts" stroke={APPT} strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </Panel>
+
+      <div className="charts" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+        <Panel title="Deals closed per month" icon={Briefcase}>
+          {!hasDeals ? <Empty msg="No closed deals yet." /> : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={dealByMonth} margin={{ top: 8, right: 8, bottom: 4, left: -12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={LINE_C} />
+                <XAxis dataKey="month" tick={axisStyle} />
+                <YAxis tick={axisStyle} />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="Won" fill="#16A34A" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="Lost" fill="#B4453F" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Panel>
+        <Panel title="Win rate trend" icon={Percent}>
+          {!hasDeals ? <Empty msg="No closed deals yet." /> : (
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={dealByMonth} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={LINE_C} />
+                <XAxis dataKey="month" tick={axisStyle} />
+                <YAxis tick={axisStyle} domain={[0, 100]} unit="%" />
+                <Tooltip />
+                <Line type="monotone" dataKey="Win %" stroke={CYAN} strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </Panel>
+      </div>
+
+      <Panel title="Rep comparison" icon={Trophy} style={{ marginTop: 16 }}>
+        {repRows.length === 0 ? <Empty msg="No reps in scope." /> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  {["Rep", "Calls", "Emails", "Appts", "Won", "Won $", "Win %"].map((h, i) => (
+                    <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {repRows.map((r) => (
+                  <tr key={r.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                    <td style={{ padding: "10px 12px" }}><div style={{ fontWeight: 600 }}>{r.name}</div><div style={{ fontSize: 11.5, opacity: 0.55 }}>{r.role}</div></td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.calls.toLocaleString()}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.emails.toLocaleString()}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.appts.toLocaleString()}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.won}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{fmtMoney(r.wonValue)}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.winRate == null ? "—" : `${r.winRate}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }
