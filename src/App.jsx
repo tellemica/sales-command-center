@@ -1008,7 +1008,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
 
   const saveInfo = async () => {
     setBusy("Saving…");
-    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes }); await refetch(); setEditing(false); }
+    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes, ownerId: draft.ownerId, secondaryOwnerId: draft.secondaryOwnerId }); await refetch(); setEditing(false); }
     finally { setBusy(""); }
   };
 
@@ -1070,6 +1070,39 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
               </div>
+              {(() => {
+                const isMgmt = effectiveUser.role === "admin" || effectiveUser.role === "management";
+                // Permission gate: once an owner is set, only admin/management may change it.
+                const ownerLocked = !!company.ownerId && !isMgmt;
+                const ownerPool = users.filter((u) => u.role === "bdr" || u.role === "sales" || u.role === "management" || u.role === "admin");
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <Field label="Account owner">
+                      <div style={{ position: "relative" }}>
+                        <select value={draft.ownerId || ""} disabled={ownerLocked}
+                          onChange={(e) => setDraft({ ...draft, ownerId: e.target.value })}
+                          style={{ ...inputStyle, appearance: "none", cursor: ownerLocked ? "not-allowed" : "pointer", opacity: ownerLocked ? 0.6 : 1 }}>
+                          <option value="">Unassigned</option>
+                          {ownerPool.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </select>
+                        <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    </Field>
+                    <Field label="Shared with (optional)">
+                      <div style={{ position: "relative" }}>
+                        <select value={draft.secondaryOwnerId || ""} disabled={ownerLocked}
+                          onChange={(e) => setDraft({ ...draft, secondaryOwnerId: e.target.value })}
+                          style={{ ...inputStyle, appearance: "none", cursor: ownerLocked ? "not-allowed" : "pointer", opacity: ownerLocked ? 0.6 : 1 }}>
+                          <option value="">No one</option>
+                          {ownerPool.filter((u) => u.id !== draft.ownerId).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </select>
+                        <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    </Field>
+                    {ownerLocked && <p style={{ gridColumn: "1 / -1", fontSize: 12, opacity: 0.55, margin: 0 }}>This account already has an owner. Ask a manager or admin to reassign it.</p>}
+                  </div>
+                );
+              })()}
               <Field label="Description / overview"><textarea rows={3} value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={saveInfo} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>Save</button>
@@ -1085,6 +1118,8 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
                 <InfoRow label="BAN" value={company.ban} />
                 <InfoRow label="FAN" value={company.fan} />
                 <InfoRow label="Address" value={company.address} />
+                <InfoRow label="Account owner" value={company.ownerId ? nameOf(company.ownerId) : ""} />
+                {company.secondaryOwnerId && <InfoRow label="Shared with" value={nameOf(company.secondaryOwnerId)} />}
               </div>
               {company.notes && <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 14px", opacity: 0.85 }}>{company.notes}</p>}
               <button onClick={() => { setDraft(company); setEditing(true); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 13.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Edit company info</button>
@@ -1147,7 +1182,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
       )}
 
       {/* CONTACTS */}
-      {tab === "contacts" && <ContactsSection companyId={companyId} contacts={contacts} reload={loadSub} />}
+      {tab === "contacts" && <ContactsSection companyId={companyId} contacts={contacts} reload={loadSub} users={users} effectiveUser={effectiveUser} />}
 
       {/* NOTES */}
       {tab === "notes" && <NotesSection companyId={companyId} notes={notes} nameOf={nameOf} effectiveUser={effectiveUser} reload={loadSub} />}
@@ -1175,24 +1210,34 @@ function InfoRow({ label, value, link }) {
   );
 }
 
-function ContactsSection({ companyId, contacts, reload }) {
+function ContactsSection({ companyId, contacts, reload, users, effectiveUser }) {
   const [modal, setModal] = useState(null); // contact being edited, or {} for new
+  const [openNotes, setOpenNotes] = useState(() => new Set());
   const save = async (c) => { await api.saveContact(companyId, c); setModal(null); await reload(); };
   const del = async (id) => { if (confirm("Delete this contact?")) { await api.deleteContact(id); await reload(); } };
+  const toggleNotes = (id) => setOpenNotes((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   return (
     <Panel title="Contacts" icon={Users} action={<button onClick={() => setModal({})} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}><UserPlus size={14} /> Add contact</button>}>
       {contacts.length === 0 ? <Empty msg="No contacts yet." /> : (
         <div style={{ display: "grid", gap: 8 }}>
           {contacts.map((c) => (
-            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : null}</div>
-                <div style={{ fontSize: 12.5, opacity: 0.65 }}>{[c.email, c.phone].filter(Boolean).join(" · ") || "No contact details"}</div>
+            <div key={c.id} style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : null}</div>
+                  <div style={{ fontSize: 12.5, opacity: 0.65 }}>{[c.email, c.phone].filter(Boolean).join(" · ") || "No contact details"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button onClick={() => toggleNotes(c.id)} className="tap" style={{ ...iconBtn, color: openNotes.has(c.id) ? EMAIL : INK }} title="Notes / history"><FileSpreadsheet size={14} /></button>
+                  <button onClick={() => setModal(c)} className="tap" style={iconBtn} title="Edit"><Pencil size={14} /></button>
+                  <button onClick={() => del(c.id)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
+                </div>
               </div>
-              <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => setModal(c)} className="tap" style={iconBtn} title="Edit"><Pencil size={14} /></button>
-                <button onClick={() => del(c.id)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
-              </div>
+              {openNotes.has(c.id) && (
+                <div style={{ marginTop: 12, borderTop: `1px solid ${LINE_C}`, paddingTop: 12 }}>
+                  <EntityNotes entityType="contact" entityId={c.id} users={users} effectiveUser={effectiveUser} compact />
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1250,6 +1295,40 @@ function NotesSection({ companyId, notes, nameOf, effectiveUser, reload }) {
         </div>
       )}
     </Panel>
+  );
+}
+
+// Timestamped running notes for a contact or a deal. Loads its own data.
+function EntityNotes({ entityType, entityId, users, effectiveUser, compact }) {
+  const [notes, setNotes] = useState(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : "Someone"; };
+  const load = async () => { try { setNotes(await api.listEntityNotes(entityType, entityId)); } catch { setNotes([]); } };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [entityType, entityId]);
+  const add = async () => { if (!text.trim()) return; setBusy(true); try { await api.addEntityNote(entityType, entityId, text.trim()); setText(""); await load(); } finally { setBusy(false); } };
+  const del = async (id) => { if (confirm("Delete this note?")) { await api.deleteEntityNote(id); await load(); } };
+  return (
+    <div style={compact ? { marginTop: 8 } : {}}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" style={{ ...inputStyle, marginBottom: 0, resize: "vertical" }} />
+        <button onClick={add} disabled={busy || !text.trim()} className="tap" style={{ background: text.trim() && !busy ? INK : LINE_C, color: text.trim() && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 600, cursor: text.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>Add</button>
+      </div>
+      {notes === null ? <div style={{ fontSize: 13, opacity: 0.4, padding: 8 }}>Loading…</div>
+        : notes.length === 0 ? <Empty msg="No notes yet." /> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {notes.map((n) => (
+            <div key={n.id} style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n.body}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                <span style={{ fontSize: 12, opacity: 0.5 }}>{nameOf(n.authorId)} · {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                {n.authorId === effectiveUser.id && <button onClick={() => del(n.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={13} /></button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2900,13 +2979,13 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
       {modal && (
         <DealModal deal={modal.deal} onSave={upsertDeal} onDelete={removeDeal} onClose={() => setModal(null)}
           liveUser={liveUser} salesReps={users.filter((u) => u.role === "sales")}
-          assignableOwners={repUsers} />
+          assignableOwners={repUsers} dealUsers={users} />
       )}
     </>
   );
 }
 
-function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners }) {
+function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners, dealUsers }) {
   const isBDR = liveUser && liveUser.role === "bdr";
   const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
   const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
@@ -3008,6 +3087,12 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
                 </div>
               ))}
             </div>
+          </div>
+        )}
+        {deal && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Notes &amp; history</div>
+            <EntityNotes entityType="deal" entityId={deal.id} users={dealUsers} effectiveUser={liveUser} compact />
           </div>
         )}
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
