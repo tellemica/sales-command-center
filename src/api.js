@@ -88,6 +88,32 @@ export async function listEntries() {
   return data.map(toCamelEntry);
 }
 
+// Promote a contact captured on an activity into the company's Contacts roster,
+// but only if one with the same name doesn't already exist for that company.
+// Best-effort: never let a contact-sync failure block the activity save.
+async function syncContactFromEntry(entry) {
+  try {
+    const companyId = entry.companyId;
+    const name = (entry.contact || "").trim();
+    if (!companyId || !name) return;
+    const { data: existing } = await supabase
+      .from("company_contacts")
+      .select("id")
+      .eq("company_id", companyId)
+      .ilike("name", name)
+      .limit(1);
+    if (existing && existing.length) return; // already have this contact
+    await supabase.from("company_contacts").insert({
+      company_id: companyId,
+      name,
+      phone: entry.phone || "",
+      email: entry.email || "",
+    });
+  } catch {
+    /* ignore — activity is already saved */
+  }
+}
+
 export async function addEntry(entry) {
   // Tie the activity to a company record (create one if this name is new).
   if (entry.company && !entry.companyId) {
@@ -95,7 +121,9 @@ export async function addEntry(entry) {
   }
   const { data, error } = await supabase.from("entries").insert(fromCamelEntry(entry)).select().single();
   if (error) throw error;
-  return toCamelEntry(data);
+  const saved = toCamelEntry(data);
+  await syncContactFromEntry(saved); // auto-add the contact to the company roster
+  return saved;
 }
 
 // Insert many entries at once (used by bulk upload). Returns the created rows.
@@ -108,7 +136,10 @@ export async function addEntriesBulk(entries) {
   const rows = linked.map(fromCamelEntry);
   const { data, error } = await supabase.from("entries").insert(rows).select();
   if (error) throw error;
-  return (data || []).map(toCamelEntry);
+  const saved = (data || []).map(toCamelEntry);
+  // Promote any contacts captured on the uploaded rows (sequential to de-dupe correctly).
+  for (const e of saved) await syncContactFromEntry(e);
+  return saved;
 }
 
 export async function deleteEntry(id) {
