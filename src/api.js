@@ -238,7 +238,7 @@ export async function clearUserGoal(userId) {
 const toCamelCompany = (c) => c && ({
   id: c.id, name: c.name, nameKey: c.name_key, industry: c.industry || "",
   website: c.website || "", phone: c.phone || "", address: c.address || "",
-  ban: c.ban || "", fan: c.fan || "", notes: c.notes || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
+  ban: c.ban || "", fan: c.fan || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
 });
 
 export async function listCompanies() {
@@ -259,6 +259,9 @@ export async function updateCompany(id, patch) {
   ["name", "industry", "website", "phone", "address", "ban", "fan", "notes"].forEach((k) => {
     if (patch[k] !== undefined) db[k] = patch[k];
   });
+  // Ownership: null out empty strings so the FK stays clean.
+  if (patch.ownerId !== undefined) db.owner_id = patch.ownerId || null;
+  if (patch.secondaryOwnerId !== undefined) db.secondary_owner_id = patch.secondaryOwnerId || null;
   if (patch.name !== undefined) db.name_key = patch.name.trim().toLowerCase();
   const { data, error } = await supabase.from("companies").update(db).eq("id", id).select().single();
   if (error) throw error;
@@ -321,6 +324,26 @@ export async function addCompanyNote(companyId, body) {
 }
 export async function deleteCompanyNote(id) {
   const { error } = await supabase.from("company_notes").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---- Entity notes (contacts + deals) ----
+const toCamelEntityNote = (n) => n && ({ id: n.id, entityType: n.entity_type, entityId: n.entity_id, authorId: n.author_id, body: n.body, createdAt: n.created_at });
+
+export async function listEntityNotes(entityType, entityId) {
+  const { data, error } = await supabase.from("entity_notes")
+    .select("*").eq("entity_type", entityType).eq("entity_id", entityId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelEntityNote);
+}
+export async function addEntityNote(entityType, entityId, body) {
+  const { data: me } = await supabase.auth.getUser();
+  const { error } = await supabase.from("entity_notes").insert({ entity_type: entityType, entity_id: entityId, author_id: me?.user?.id || null, body });
+  if (error) throw error;
+}
+export async function deleteEntityNote(id) {
+  const { error } = await supabase.from("entity_notes").delete().eq("id", id);
   if (error) throw error;
 }
 
