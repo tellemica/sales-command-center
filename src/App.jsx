@@ -132,7 +132,7 @@ const icsStamp = (d) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z"
 // Convert a stored ISO timestamp to the value a <input type="datetime-local"> expects (local time, no zone).
 const toLocalInput = (iso) => { const d = new Date(iso); const off = d.getTimezoneOffset() * 60000; return new Date(d - off).toISOString().slice(0, 16); };
 
-function downloadAppointmentICS(deal, rep, manager) {
+function downloadAppointmentICS(deal, rep, manager, extraEmails) {
   if (!deal.apptAt) return;
   const start = new Date(deal.apptAt);
   const end = new Date(start.getTime() + 30 * 60000); // 30-minute default
@@ -159,10 +159,14 @@ function downloadAppointmentICS(deal, rep, manager) {
     `DESCRIPTION:${icsEscape(fill(APPT_TEMPLATE.body))}`,
     `LOCATION:${icsEscape(deal.company || "")}`,
   ];
-  // Organizer = rep; required attendee = customer; optional = manager.
+  // Organizer = rep; required attendee = customer; optional = manager + extras.
   if (rep?.email) lines.push(`ORGANIZER;CN=${icsEscape(repName)}:mailto:${rep.email}`);
   if (deal.contactEmail) lines.push(`ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${icsEscape(deal.contact || deal.contactEmail)}:mailto:${deal.contactEmail}`);
   if (manager?.email) lines.push(`ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${icsEscape(manager.name || manager.email)}:mailto:${manager.email}`);
+  // Any additional invitees the rep listed (comma/semicolon/space separated).
+  (extraEmails || "").split(/[,;\s]+/).map((s) => s.trim()).filter((s) => s.includes("@")).forEach((em) => {
+    lines.push(`ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${icsEscape(em)}:mailto:${em}`);
+  });
   lines.push("END:VEVENT", "END:VCALENDAR");
 
   const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
@@ -2713,12 +2717,12 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       try {
         const deal = await api.upsertAppointmentDeal({
           company: form.company.trim(), contact: form.contact.trim(),
-          contactEmail: form.apptEmail.trim(), apptAt: form.apptAt,
+          contactEmail: form.email.trim(), apptAt: form.apptAt,
           ownerId: taggedRepId || liveUser.id, taggedRepId,
         });
         const rep = (users || []).find((u) => u.id === (deal.ownerId)) || liveUser;
         const mgr = (users || []).find((u) => u.id === rep.managerId);
-        downloadAppointmentICS(deal, rep, mgr);
+        downloadAppointmentICS(deal, rep, mgr, form.apptEmail.trim());
       } catch (e) { /* deal/calendar is best-effort; activity already saved */ }
     }
     setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptAt: "", apptEmail: "" });
@@ -2809,10 +2813,10 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, fontSize: 13, fontWeight: 600, color: "#7A5C1E" }}>
               <CalendarCheck size={15} /> Appointment details
             </div>
-            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date/time and the customer's email to auto-create the deal and generate an Outlook invite when you save.</p>
+            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date/time to auto-create the deal and generate an Outlook invite when you save. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Appointment date & time"><input type="datetime-local" value={form.apptAt ? toLocalInput(form.apptAt) : ""} onChange={(e) => setForm({ ...form, apptAt: e.target.value ? new Date(e.target.value).toISOString() : "" })} style={inputStyle} /></Field>
-              <Field label="Customer email"><input type="email" value={form.apptEmail} onChange={(e) => setForm({ ...form, apptEmail: e.target.value })} style={inputStyle} placeholder="contact@company.com" /></Field>
+              <Field label="Additional invitees (optional)"><input type="text" value={form.apptEmail} onChange={(e) => setForm({ ...form, apptEmail: e.target.value })} style={inputStyle} placeholder="other@company.com, ..." /></Field>
             </div>
           </div>
         )}
