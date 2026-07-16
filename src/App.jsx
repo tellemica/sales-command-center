@@ -2717,6 +2717,23 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
   }, [allEntries, entries]);
 
+  // When an appointment is first indicated, seed the date/time with real
+  // committed values (today + next half hour) so the fields show black,
+  // selected values — not the browser's faded placeholder — and the invite
+  // button is usable immediately without tapping each field.
+  useEffect(() => {
+    if ((+form.appts || 0) >= 1 && !form.apptDate && !form.apptTime) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() > 30 ? 60 : 30, 0, 0); // round up to next :30 or :00
+      const pad = (n) => String(n).padStart(2, "0");
+      setForm((f) => ({
+        ...f,
+        apptDate: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+        apptTime: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+      }));
+    }
+  }, [form.appts]); // eslint-disable-line
+
   const suggestions = form.company.trim().length >= 1
     ? companyIndex.filter((c) => c.company.toLowerCase().includes(form.company.trim().toLowerCase())).slice(0, 6)
     : [];
