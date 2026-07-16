@@ -81,6 +81,17 @@ export async function deleteProfile(id) {
   if (error) throw error;
 }
 
+// Admin: reset another user's password. Runs in an Edge Function with the
+// service role; the function verifies the caller is an admin and refuses to
+// change another admin's password.
+export async function adminSetPassword(userId, newPassword) {
+  const { data, error } = await supabase.functions.invoke("admin-set-password", {
+    body: { userId, newPassword },
+  });
+  if (error) throw error;
+  return data;
+}
+
 // ---- Entries ----
 export async function listEntries() {
   const { data, error } = await supabase.from("entries").select("*").order("date", { ascending: false });
