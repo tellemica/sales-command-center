@@ -2677,6 +2677,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
+  const [invitePrompt, setInvitePrompt] = useState(null); // { deal, rep, mgr, extra } when an invite is ready to download
 
   // Unique company names from everything the user can see, for autocomplete.
   const companyIndex = useMemo(() => {
@@ -2712,7 +2713,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       taggedRepId,
     }));
     // If an appointment was set with a date/time, ensure a deal exists for it
-    // and offer the calendar invite.
+    // and offer the calendar invite via a confirmation popup (no auto-download).
     if ((+form.appts || 0) >= 1 && form.apptAt) {
       try {
         const deal = await api.upsertAppointmentDeal({
@@ -2722,7 +2723,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         });
         const rep = (users || []).find((u) => u.id === (deal.ownerId)) || liveUser;
         const mgr = (users || []).find((u) => u.id === rep.managerId);
-        downloadAppointmentICS(deal, rep, mgr, form.apptEmail.trim());
+        setInvitePrompt({ deal, rep, mgr, extra: form.apptEmail.trim() });
       } catch (e) { /* deal/calendar is best-effort; activity already saved */ }
     }
     setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptAt: "", apptEmail: "" });
@@ -2853,6 +2854,30 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     <div style={{ marginTop: 20 }}>
       <BulkUpload liveUser={liveUser} users={users} saveEntries={saveEntries} visibleUserIds={visibleUserIds} />
     </div>
+
+    {invitePrompt && (
+      <div onClick={() => setInvitePrompt(null)} style={{ position: "fixed", inset: 0, background: "rgba(18,33,30,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 420 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: APPT + "20", display: "grid", placeItems: "center" }}><CalendarCheck size={18} color={APPT} /></div>
+            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600, margin: 0 }}>Appointment saved</h3>
+          </div>
+          <p style={{ fontSize: 13.5, opacity: 0.7, lineHeight: 1.5, margin: "0 0 6px" }}>
+            Download the Outlook invite for <b>{invitePrompt.deal.company}</b> on {new Date(invitePrompt.deal.apptAt).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}?
+          </p>
+          <p style={{ fontSize: 12.5, opacity: 0.55, lineHeight: 1.5, margin: "0 0 18px" }}>
+            It'll open in Outlook so you can review and add anyone before sending. Invite goes to {invitePrompt.deal.contactEmail || "the customer"}{invitePrompt.mgr?.email ? ", your manager," : ""} and you.
+          </p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { downloadAppointmentICS(invitePrompt.deal, invitePrompt.rep, invitePrompt.mgr, invitePrompt.extra); setInvitePrompt(null); }}
+              className="tap" style={{ flex: 1, background: INK, color: PAPER, border: "none", borderRadius: 10, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <CalendarCheck size={16} /> Download invite
+            </button>
+            <button onClick={() => setInvitePrompt(null)} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 18px", fontSize: 14, cursor: "pointer" }}>Skip</button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 }
