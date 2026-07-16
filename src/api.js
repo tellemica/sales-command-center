@@ -187,6 +187,34 @@ export async function deleteDeal(id) {
   if (error) throw error;
 }
 
+// Ensure a deal exists for a company when an appointment is logged. If the
+// company already has an OPEN deal, attach the appointment to it; otherwise
+// create a new deal in the "appointment" stage. Returns the saved deal.
+export async function upsertAppointmentDeal({ company, contact, contactEmail, apptAt, ownerId, taggedRepId }) {
+  const companyId = await findOrCreateCompany(company);
+  // Look for an existing open deal on this company.
+  const { data: existing } = await supabase.from("deals")
+    .select("*").eq("company_id", companyId).not("stage", "in", '("won","lost")')
+    .order("created_at", { ascending: true }).limit(1);
+  const found = existing && existing[0];
+  if (found) {
+    const patch = { appt_at: apptAt || null, stage: "appointment", stage_changed_at: new Date().toISOString() };
+    if (contactEmail) patch.contact_email = contactEmail;
+    if (contact && !found.contact) patch.contact = contact;
+    const { data, error } = await supabase.from("deals").update(patch).eq("id", found.id).select().single();
+    if (error) throw error;
+    return toCamelDeal(data);
+  }
+  // No open deal — create one in the appointment stage.
+  const { data, error } = await supabase.from("deals").insert(fromCamelDeal({
+    company, companyId, contact: contact || "", contactEmail: contactEmail || "", value: 0,
+    stage: "appointment", apptAt: apptAt || "", stageChangedAt: new Date().toISOString(),
+    ownerId, taggedRepId: taggedRepId || null,
+  })).select().single();
+  if (error) throw error;
+  return toCamelDeal(data);
+}
+
 // ---- Deal stage history ----
 const toCamelStageEvent = (r) => r && ({ id: r.id, dealId: r.deal_id, fromStage: r.from_stage || "", toStage: r.to_stage, changedBy: r.changed_by || "", changedAt: r.changed_at });
 
