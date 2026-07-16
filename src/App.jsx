@@ -2677,7 +2677,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
-  const [invitePrompt, setInvitePrompt] = useState(null); // { deal, rep, mgr, extra } when an invite is ready to download
+  // (invite is downloaded via the button in the appointment box)
 
   // Unique company names from everything the user can see, for autocomplete.
   const companyIndex = useMemo(() => {
@@ -2712,19 +2712,16 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       carrierRep: form.carrierRep.trim(),
       taggedRepId,
     }));
-    // If an appointment was set with a date/time, ensure a deal exists for it
-    // and offer the calendar invite via a confirmation popup (no auto-download).
+    // If an appointment was set with a date/time, ensure a deal exists for it.
+    // (The invite is downloaded via the button in the appointment box.)
     if ((+form.appts || 0) >= 1 && form.apptAt) {
       try {
-        const deal = await api.upsertAppointmentDeal({
+        await api.upsertAppointmentDeal({
           company: form.company.trim(), contact: form.contact.trim(),
           contactEmail: form.email.trim(), apptAt: form.apptAt,
           ownerId: taggedRepId || liveUser.id, taggedRepId,
         });
-        const rep = (users || []).find((u) => u.id === (deal.ownerId)) || liveUser;
-        const mgr = (users || []).find((u) => u.id === rep.managerId);
-        setInvitePrompt({ deal, rep, mgr, extra: form.apptEmail.trim() });
-      } catch (e) { /* deal/calendar is best-effort; activity already saved */ }
+      } catch (e) { /* deal creation is best-effort; activity already saved */ }
     }
     setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptAt: "", apptEmail: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
@@ -2814,11 +2811,29 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, fontSize: 13, fontWeight: 600, color: "#7A5C1E" }}>
               <CalendarCheck size={15} /> Appointment details
             </div>
-            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date/time to auto-create the deal and generate an Outlook invite when you save. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
+            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date/time, then download the Outlook invite below. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Appointment date & time"><input type="datetime-local" value={form.apptAt ? toLocalInput(form.apptAt) : ""} onChange={(e) => setForm({ ...form, apptAt: e.target.value ? new Date(e.target.value).toISOString() : "" })} style={inputStyle} /></Field>
               <Field label="Additional invitees (optional)"><input type="text" value={form.apptEmail} onChange={(e) => setForm({ ...form, apptEmail: e.target.value })} style={inputStyle} placeholder="other@company.com, ..." /></Field>
             </div>
+            <button type="button"
+              disabled={!form.apptAt || !form.email.trim()}
+              onClick={() => {
+                const rep = (users || []).find((u) => u.id === (form.workingFor && form.workingFor !== "self" ? form.workingFor : liveUser.id)) || liveUser;
+                const mgr = (users || []).find((u) => u.id === rep.managerId);
+                downloadAppointmentICS(
+                  { id: "appt", company: form.company.trim(), contact: form.contact.trim(), contactEmail: form.email.trim(), value: 0, apptAt: form.apptAt },
+                  rep, mgr, form.apptEmail.trim()
+                );
+              }}
+              className="tap"
+              style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                background: form.apptAt && form.email.trim() ? INK : LINE_C, color: form.apptAt && form.email.trim() ? PAPER : "#8494A6",
+                border: "none", borderRadius: 9, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
+                cursor: form.apptAt && form.email.trim() ? "pointer" : "default" }}>
+              <CalendarCheck size={15} /> Download Outlook invite
+            </button>
+            {(!form.apptAt || !form.email.trim()) && <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0", textAlign: "center" }}>Add {!form.apptAt ? "a date/time" : ""}{!form.apptAt && !form.email.trim() ? " and " : ""}{!form.email.trim() ? "the customer's Email above" : ""} to enable.</p>}
           </div>
         )}
         <Field label="Notes (optional)"><textarea rows={2} placeholder="Prospect, company, follow-up…" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
@@ -2854,30 +2869,6 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     <div style={{ marginTop: 20 }}>
       <BulkUpload liveUser={liveUser} users={users} saveEntries={saveEntries} visibleUserIds={visibleUserIds} />
     </div>
-
-    {invitePrompt && (
-      <div onClick={() => setInvitePrompt(null)} style={{ position: "fixed", inset: 0, background: "rgba(18,33,30,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
-        <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 420 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 9, background: APPT + "20", display: "grid", placeItems: "center" }}><CalendarCheck size={18} color={APPT} /></div>
-            <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600, margin: 0 }}>Appointment saved</h3>
-          </div>
-          <p style={{ fontSize: 13.5, opacity: 0.7, lineHeight: 1.5, margin: "0 0 6px" }}>
-            Download the Outlook invite for <b>{invitePrompt.deal.company}</b> on {new Date(invitePrompt.deal.apptAt).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}?
-          </p>
-          <p style={{ fontSize: 12.5, opacity: 0.55, lineHeight: 1.5, margin: "0 0 18px" }}>
-            It'll open in Outlook so you can review and add anyone before sending. Invite goes to {invitePrompt.deal.contactEmail || "the customer"}{invitePrompt.mgr?.email ? ", your manager," : ""} and you.
-          </p>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => { downloadAppointmentICS(invitePrompt.deal, invitePrompt.rep, invitePrompt.mgr, invitePrompt.extra); setInvitePrompt(null); }}
-              className="tap" style={{ flex: 1, background: INK, color: PAPER, border: "none", borderRadius: 10, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <CalendarCheck size={16} /> Download invite
-            </button>
-            <button onClick={() => setInvitePrompt(null)} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 18px", fontSize: 14, cursor: "pointer" }}>Skip</button>
-          </div>
-        </div>
-      </div>
-    )}
     </>
   );
 }
