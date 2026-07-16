@@ -132,6 +132,34 @@ const icsStamp = (d) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z"
 // Convert a stored ISO timestamp to the value a <input type="datetime-local"> expects (local time, no zone).
 const toLocalInput = (iso) => { const d = new Date(iso); const off = d.getTimezoneOffset() * 60000; return new Date(d - off).toISOString().slice(0, 16); };
 
+// US timezones reps pick from. `zone` is an IANA name used to compute the correct UTC instant.
+const US_TIMEZONES = [
+  { id: "America/New_York", label: "Eastern (ET)" },
+  { id: "America/Chicago", label: "Central (CT)" },
+  { id: "America/Denver", label: "Mountain (MT)" },
+  { id: "America/Phoenix", label: "Arizona (no DST)" },
+  { id: "America/Los_Angeles", label: "Pacific (PT)" },
+  { id: "America/Anchorage", label: "Alaska (AKT)" },
+  { id: "Pacific/Honolulu", label: "Hawaii (HT)" },
+];
+// Given a date ("YYYY-MM-DD"), a time ("HH:MM"), and an IANA zone, return the
+// absolute UTC Date for that wall-clock time in that zone. Works by measuring the
+// zone's offset at that moment and adjusting.
+function zonedToUTC(dateStr, timeStr, zone) {
+  if (!dateStr || !timeStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = timeStr.split(":").map(Number);
+  // Start with the naive UTC guess, then correct by the zone's offset at that time.
+  const asUTC = Date.UTC(y, m - 1, d, hh, mm);
+  const guess = new Date(asUTC);
+  // What wall-clock time does `guess` show in the target zone?
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: zone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const parts = Object.fromEntries(fmt.formatToParts(guess).map((p) => [p.type, p.value]));
+  const shown = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute);
+  // Difference between what we wanted and what the zone showed = the offset to remove.
+  return new Date(asUTC - (shown - asUTC));
+}
+
 function downloadAppointmentICS(deal, rep, manager, extraEmails) {
   if (!deal.apptAt) return;
   const start = new Date(deal.apptAt);
@@ -2673,7 +2701,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptAt: "", apptEmail: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptTz: liveUser.timezone || "America/New_York", apptEmail: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -2714,16 +2742,17 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     }));
     // If an appointment was set with a date/time, ensure a deal exists for it.
     // (The invite is downloaded via the button in the appointment box.)
-    if ((+form.appts || 0) >= 1 && form.apptAt) {
+    if ((+form.appts || 0) >= 1 && form.apptDate && form.apptTime) {
       try {
+        const start = zonedToUTC(form.apptDate, form.apptTime, form.apptTz);
         await api.upsertAppointmentDeal({
           company: form.company.trim(), contact: form.contact.trim(),
-          contactEmail: form.email.trim(), apptAt: form.apptAt,
+          contactEmail: form.email.trim(), apptAt: start ? start.toISOString() : null,
           ownerId: taggedRepId || liveUser.id, taggedRepId,
         });
       } catch (e) { /* deal creation is best-effort; activity already saved */ }
     }
-    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptAt: "", apptEmail: "" });
+    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "" });
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
 
@@ -2811,29 +2840,43 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, fontSize: 13, fontWeight: 600, color: "#7A5C1E" }}>
               <CalendarCheck size={15} /> Appointment details
             </div>
-            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date/time, then download the Outlook invite below. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
+            <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date, time, and timezone, then download the Outlook invite below. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <Field label="Appointment date & time"><input type="datetime-local" value={form.apptAt ? toLocalInput(form.apptAt) : ""} onChange={(e) => setForm({ ...form, apptAt: e.target.value ? new Date(e.target.value).toISOString() : "" })} style={inputStyle} /></Field>
+              <Field label="Appointment date"><input type="date" value={form.apptDate} onChange={(e) => setForm({ ...form, apptDate: e.target.value })} style={inputStyle} /></Field>
+              <Field label="Time"><input type="time" value={form.apptTime} onChange={(e) => setForm({ ...form, apptTime: e.target.value })} style={inputStyle} /></Field>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Timezone">
+                <div style={{ position: "relative" }}>
+                  <select value={form.apptTz} onChange={(e) => { const tz = e.target.value; setForm({ ...form, apptTz: tz }); if (tz !== liveUser.timezone) { api.updateProfile(liveUser.id, { timezone: tz }).catch(() => {}); liveUser.timezone = tz; } }}
+                    style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                    {US_TIMEZONES.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
+                  </select>
+                  <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                </div>
+              </Field>
               <Field label="Additional invitees (optional)"><input type="text" value={form.apptEmail} onChange={(e) => setForm({ ...form, apptEmail: e.target.value })} style={inputStyle} placeholder="other@company.com, ..." /></Field>
             </div>
             <button type="button"
-              disabled={!form.apptAt || !form.email.trim()}
+              disabled={!form.apptDate || !form.apptTime || !form.email.trim()}
               onClick={() => {
+                const start = zonedToUTC(form.apptDate, form.apptTime, form.apptTz);
+                if (!start) return;
                 const rep = (users || []).find((u) => u.id === (form.workingFor && form.workingFor !== "self" ? form.workingFor : liveUser.id)) || liveUser;
                 const mgr = (users || []).find((u) => u.id === rep.managerId);
                 downloadAppointmentICS(
-                  { id: "appt", company: form.company.trim(), contact: form.contact.trim(), contactEmail: form.email.trim(), value: 0, apptAt: form.apptAt },
+                  { id: "appt", company: form.company.trim(), contact: form.contact.trim(), contactEmail: form.email.trim(), value: 0, apptAt: start.toISOString() },
                   rep, mgr, form.apptEmail.trim()
                 );
               }}
               className="tap"
               style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                background: form.apptAt && form.email.trim() ? INK : LINE_C, color: form.apptAt && form.email.trim() ? PAPER : "#8494A6",
+                background: form.apptDate && form.apptTime && form.email.trim() ? INK : LINE_C, color: form.apptDate && form.apptTime && form.email.trim() ? PAPER : "#8494A6",
                 border: "none", borderRadius: 9, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
-                cursor: form.apptAt && form.email.trim() ? "pointer" : "default" }}>
+                cursor: form.apptDate && form.apptTime && form.email.trim() ? "pointer" : "default" }}>
               <CalendarCheck size={15} /> Download Outlook invite
             </button>
-            {(!form.apptAt || !form.email.trim()) && <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0", textAlign: "center" }}>Add {!form.apptAt ? "a date/time" : ""}{!form.apptAt && !form.email.trim() ? " and " : ""}{!form.email.trim() ? "the customer's Email above" : ""} to enable.</p>}
+            {(!form.apptDate || !form.apptTime || !form.email.trim()) && <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0", textAlign: "center" }}>Add a date, time, and the customer's Email above to enable.</p>}
           </div>
         )}
         <Field label="Notes (optional)"><textarea rows={2} placeholder="Prospect, company, follow-up…" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} /></Field>
