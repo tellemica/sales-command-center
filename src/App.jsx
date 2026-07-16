@@ -3207,6 +3207,35 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
 function UserModal({ user, salesReps, onSave, onClose }) {
   const [f, setF] = useState(user || { name: "", email: "", password: "", role: "bdr" });
   const [err, setErr] = useState("");
+  // Password-reset state (only for editing an existing non-admin user).
+  const [showReset, setShowReset] = useState(false);
+  const [newPw, setNewPw] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwVisible, setPwVisible] = useState(true);
+
+  const canReset = user && user.role !== "admin";
+
+  const genPassword = () => {
+    // Readable-ish random temp password.
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    let out = "";
+    const arr = new Uint32Array(12);
+    crypto.getRandomValues(arr);
+    for (let i = 0; i < 12; i++) out += chars[arr[i] % chars.length];
+    setNewPw(out); setPwVisible(true); setPwMsg("");
+  };
+
+  const doReset = async () => {
+    if (newPw.trim().length < 8) { setPwMsg("Password must be at least 8 characters."); return; }
+    setPwBusy(true); setPwMsg("");
+    try {
+      await api.adminSetPassword(user.id, newPw.trim());
+      setPwMsg(`Password updated. Share it with ${user.name.split(" ")[0]}: ${newPw.trim()}`);
+    } catch (e) {
+      setPwMsg("Couldn't update: " + (e?.message || e));
+    } finally { setPwBusy(false); }
+  };
 
   const submit = () => {
     if (!f.name.trim() || !f.email.trim()) { setErr("Name and email are required."); return; }
@@ -3217,7 +3246,7 @@ function UserModal({ user, salesReps, onSave, onClose }) {
 
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(18,33,30,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 440 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 440, maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 }}>{user ? "Edit user" : "Add user"}</h3>
           <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
@@ -3241,6 +3270,41 @@ function UserModal({ user, salesReps, onSave, onClose }) {
             BDRs choose which Sales Rep they're working for each time they log activity or add a deal — no fixed assignment needed.
           </p>
         )}
+
+        {/* Password reset — only for existing non-admin users */}
+        {canReset && (
+          <div style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+            {!showReset ? (
+              <button onClick={() => { setShowReset(true); setPwMsg(""); setNewPw(""); }} className="tap"
+                style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 13.5, fontWeight: 600, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 7 }}>
+                <Shield size={14} /> Reset this user's password
+              </button>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 7 }}><Shield size={14} color={INK} /> Set a new password for {user.name.split(" ")[0]}</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <div style={{ position: "relative", flex: 1 }}>
+                    <input type={pwVisible ? "text" : "password"} value={newPw} onChange={(e) => { setNewPw(e.target.value); setPwMsg(""); }}
+                      placeholder="Type or generate a password" style={{ ...inputStyle, marginBottom: 0, paddingRight: 38 }} />
+                    <button onClick={() => setPwVisible((v) => !v)} className="tap" style={{ position: "absolute", right: 10, top: 10, background: "none", border: "none", cursor: "pointer", opacity: 0.5 }}>
+                      {pwVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  <button onClick={genPassword} className="tap" style={{ background: "#F1F5F9", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "0 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}>Generate</button>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={doReset} disabled={pwBusy || newPw.trim().length < 8} className="tap"
+                    style={{ background: newPw.trim().length >= 8 && !pwBusy ? INK : LINE_C, color: newPw.trim().length >= 8 && !pwBusy ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: newPw.trim().length >= 8 && !pwBusy ? "pointer" : "default" }}>
+                    {pwBusy ? "Updating…" : "Update password"}
+                  </button>
+                  <button onClick={() => { setShowReset(false); setNewPw(""); setPwMsg(""); }} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, cursor: "pointer" }}>Cancel</button>
+                </div>
+                {pwMsg && <div style={{ marginTop: 10, background: pwMsg.startsWith("Couldn't") || pwMsg.startsWith("Password must") ? "#FBECEB" : CALL + "18", color: pwMsg.startsWith("Couldn't") || pwMsg.startsWith("Password must") ? "#B4453F" : CALL, borderRadius: 8, padding: "10px 12px", fontSize: 13, fontWeight: 500, wordBreak: "break-all" }}>{pwMsg}</div>}
+              </>
+            )}
+          </div>
+        )}
+
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap"
           style={{ width: "100%", marginTop: 6, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: 13, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
