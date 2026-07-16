@@ -105,6 +105,74 @@ const dealAge = (deal) => {
   const threshold = STAGE_STALE_DAYS[deal.stage] || 30;
   return { age, stale: age >= threshold, threshold };
 };
+
+// --- Calendar invite (.ics) ---
+// Builds and downloads a pre-filled calendar file for an appointment. Opens in
+// Outlook / Google / Apple Calendar with the subject, agenda body, time, and
+// location already set — the rep just adds the attendee and sends.
+const APPT_TEMPLATE = {
+  subject: "AT&T Account Review: with {company}",
+  body: [
+    "AT&T Account Review Meeting",
+    "Date: {date}",
+    "Time: {time}",
+    "",
+    "Agenda:",
+    "- Introductions and business overview",
+    "- Review of current AT&T services and account setup",
+    "- Discussion of current usage, challenges, and business needs",
+    "- Review of available plan updates and service enhancements",
+    "- Identification of potential cost-saving opportunities",
+    "- Questions and next steps",
+  ].join("\n"),
+};
+
+const icsEscape = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+const icsStamp = (d) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+// Convert a stored ISO timestamp to the value a <input type="datetime-local"> expects (local time, no zone).
+const toLocalInput = (iso) => { const d = new Date(iso); const off = d.getTimezoneOffset() * 60000; return new Date(d - off).toISOString().slice(0, 16); };
+
+function downloadAppointmentICS(deal, rep, manager) {
+  if (!deal.apptAt) return;
+  const start = new Date(deal.apptAt);
+  const end = new Date(start.getTime() + 30 * 60000); // 30-minute default
+  const repName = rep?.name || "";
+  const fill = (t) => t
+    .replace(/{company}/g, deal.company || "")
+    .replace(/{contact}/g, deal.contact || "")
+    .replace(/{value}/g, deal.value ? fmtMoney(deal.value) : "")
+    .replace(/{rep}/g, repName)
+    .replace(/{date}/g, start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }))
+    .replace(/{time}/g, start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
+
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Tellemica//Sales Command Center//EN",
+    "METHOD:REQUEST",
+    "BEGIN:VEVENT",
+    `UID:${deal.id}-${start.getTime()}@tellemica`,
+    `DTSTAMP:${icsStamp(new Date())}`,
+    `DTSTART:${icsStamp(start)}`,
+    `DTEND:${icsStamp(end)}`,
+    `SUMMARY:${icsEscape(fill(APPT_TEMPLATE.subject))}`,
+    `DESCRIPTION:${icsEscape(fill(APPT_TEMPLATE.body))}`,
+    `LOCATION:${icsEscape(deal.company || "")}`,
+  ];
+  // Organizer = rep; required attendee = customer; optional = manager.
+  if (rep?.email) lines.push(`ORGANIZER;CN=${icsEscape(repName)}:mailto:${rep.email}`);
+  if (deal.contactEmail) lines.push(`ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${icsEscape(deal.contact || deal.contactEmail)}:mailto:${deal.contactEmail}`);
+  if (manager?.email) lines.push(`ATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=${icsEscape(manager.name || manager.email)}:mailto:${manager.email}`);
+  lines.push("END:VEVENT", "END:VCALENDAR");
+
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `appointment-${(deal.company || "meeting").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.ics`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 const fmtMoney = (n) => "$" + (n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
 // Tellemica logo lockup. `wordmark` renders the letter-spaced uppercase treatment
@@ -2915,6 +2983,12 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
                           </div>
                         );
                       })()}
+                      {d.stage === "appointment" && d.apptAt && (
+                        <button onClick={(ev) => { ev.stopPropagation(); const rep = users.find((u) => u.id === d.ownerId); const mgr = users.find((u) => u.id === rep?.managerId); downloadAppointmentICS(d, rep, mgr); }} className="tap"
+                          style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 7, background: CYAN + "18", color: "#0B6A8C", border: "none", borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                          <CalendarCheck size={12} /> Add to calendar
+                        </button>
+                      )}
                     </div>
                   ))}
                   {col.length === 0 && <div style={{ fontSize: 12, opacity: 0.3, textAlign: "center", padding: "12px 0" }}>—</div>}
@@ -2988,7 +3062,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners, dealUsers }) {
   const isBDR = liveUser && liveUser.role === "bdr";
   const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
-  const [f, setF] = useState(deal || { company: "", contact: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
+  const [f, setF] = useState(deal || { company: "", contact: "", contactEmail: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
   const [history, setHistory] = useState(null);
@@ -3008,7 +3082,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
     const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
     // Clear the lost reason if the deal isn't actually lost.
     const lostReason = f.stage === "lost" ? String(f.lostReason || "").trim() : "";
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal ? { id: deal.id } : {}) });
+    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal ? { id: deal.id } : {}) });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
@@ -3044,11 +3118,21 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
           </Field>
         )}
         <Field label="Contact (optional)"><input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} style={inputStyle} placeholder="Name, title, phone/email" /></Field>
+        <Field label="Contact email (for calendar invites)"><input type="email" value={f.contactEmail || ""} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} style={inputStyle} placeholder="contact@company.com" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Deal value ($)"><input type="number" min="0" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} style={inputStyle} placeholder="0" /></Field>
           <Field label="Expected close"><input type="date" value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} style={inputStyle} /></Field>
         </div>
         <Field label="Next action / follow-up date"><input type="date" value={f.nextActionDate || ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={inputStyle} /></Field>
+        <Field label="Appointment date & time">
+          <input type="datetime-local" value={f.apptAt ? toLocalInput(f.apptAt) : ""} onChange={(e) => setF({ ...f, apptAt: e.target.value ? new Date(e.target.value).toISOString() : "" })} style={inputStyle} />
+        </Field>
+        {f.apptAt && (
+          <button type="button" onClick={() => { const rep = (dealUsers || []).find((u) => u.id === (f.ownerId || liveUser.id)) || liveUser; const mgr = (dealUsers || []).find((u) => u.id === rep.managerId); downloadAppointmentICS({ ...f, id: deal?.id || "new" }, rep, mgr); }}
+            className="tap" style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", justifyContent: "center", background: CYAN + "18", color: "#0B6A8C", border: `1px solid ${CYAN}55`, borderRadius: 9, padding: "10px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", marginBottom: 14 }}>
+            <CalendarCheck size={15} /> Add to calendar (.ics)
+          </button>
+        )}
         <Field label="Stage">
           <div style={{ position: "relative" }}>
             <select value={f.stage} onChange={(e) => setF({ ...f, stage: e.target.value })} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
