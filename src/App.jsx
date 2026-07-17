@@ -587,6 +587,8 @@ export default function App() {
               deals={visibleDeals}
               users={users}
               effectiveUser={effectiveUser}
+              saveDeals={saveDeals}
+              visibleUserIds={visibleUserIds}
               onBack={() => setSelectedCompanyId(null)}
               onOpenCompany={openCompanyById}
               refetch={refetch}
@@ -1120,7 +1122,7 @@ function CompaniesList({ companies, entries, deals, onOpen }) {
 }
 
 // ---- CRM: Company detail page (Overview, Activities, Deals, Contacts, Notes, Attachments) ----
-function CompanyDetail({ companyId, companies, entries, deals, users, effectiveUser, onBack, onOpenCompany, refetch }) {
+function CompanyDetail({ companyId, companies, entries, deals, users, effectiveUser, saveDeals, visibleUserIds, onBack, onOpenCompany, refetch }) {
   const company = companies.find((c) => c.id === companyId);
   const [tab, setTab] = useState("overview");
   const [contacts, setContacts] = useState([]);
@@ -1129,6 +1131,14 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(company || {});
   const [busy, setBusy] = useState("");
+  const [dealModal, setDealModal] = useState(false);
+  const canEditDeals = ["bdr", "sales", "admin", "management"].includes(effectiveUser.role);
+  const repUsers = users.filter((u) => (!visibleUserIds || visibleUserIds.includes(u.id)) && (u.role === "bdr" || u.role === "sales"));
+
+  const saveNewDeal = (data) => saveDeals(async () => {
+    // Force this deal onto the current company, in the appointment-free default flow.
+    await api.upsertDeal({ ...data, companyId, company: company.name, ownerId: data.ownerId || effectiveUser.id, stageChangedAt: new Date().toISOString() });
+  }).then(() => { setDealModal(false); });
 
   const companyEntries = entries.filter((e) => e.companyId === companyId).sort((a, b) => (b.date < a.date ? -1 : 1));
   const companyDeals = deals.filter((d) => d.companyId === companyId);
@@ -1305,7 +1315,11 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
 
       {/* DEALS */}
       {tab === "deals" && (
-        <Panel title="Deals" icon={Briefcase}>
+        <Panel title="Deals" icon={Briefcase} action={canEditDeals ? (
+          <button onClick={() => setDealModal(true)} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <Plus size={14} /> Add deal
+          </button>
+        ) : null}>
           {companyDeals.length === 0 ? <Empty msg="No deals for this company yet." /> : (
             <div style={{ display: "grid", gap: 8 }}>
               {companyDeals.map((d) => (
@@ -1320,6 +1334,10 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
             </div>
           )}
         </Panel>
+      )}
+      {dealModal && (
+        <DealModal deal={{ company: company.name, companyId }} onSave={saveNewDeal} onClose={() => setDealModal(false)}
+          liveUser={effectiveUser} salesReps={users.filter((u) => u.role === "sales")} assignableOwners={repUsers} dealUsers={users} />
       )}
 
       {/* CONTACTS */}
@@ -1415,7 +1433,7 @@ function NotesSection({ companyId, notes, nameOf, effectiveUser, reload }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const add = async () => { if (!text.trim()) return; setBusy(true); try { await api.addCompanyNote(companyId, text.trim()); setText(""); await reload(); } finally { setBusy(false); } };
-  const del = async (id) => { if (confirm("Delete this note?")) { await api.deleteCompanyNote(id); await reload(); } };
+  const del = async (id) => { if (confirm("Delete this note and its attachments?")) { await api.deleteCompanyNote(id); await reload(); } };
   return (
     <Panel title="Notes" icon={Pencil}>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -1425,17 +1443,56 @@ function NotesSection({ companyId, notes, nameOf, effectiveUser, reload }) {
       {notes.length === 0 ? <Empty msg="No notes yet." /> : (
         <div style={{ display: "grid", gap: 8 }}>
           {notes.map((n) => (
-            <div key={n.id} style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
-              <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n.body}</div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                <span style={{ fontSize: 12, opacity: 0.5 }}>{nameOf(n.authorId) || "Someone"} · {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-                {n.authorId === effectiveUser.id && <button onClick={() => del(n.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={13} /></button>}
-              </div>
-            </div>
+            <NoteRow key={n.id} note={n} companyId={companyId} nameOf={nameOf} effectiveUser={effectiveUser} onDelete={del} />
           ))}
         </div>
       )}
     </Panel>
+  );
+}
+
+function NoteRow({ note, companyId, nameOf, effectiveUser, onDelete }) {
+  const [files, setFiles] = useState(null);
+  const [busy, setBusy] = useState("");
+  const fileRef = React.useRef(null);
+  const load = async () => { try { setFiles(await api.listNoteAttachments(note.id)); } catch { setFiles([]); } };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [note.id]);
+
+  const onFile = async (file) => {
+    if (!file) return;
+    setBusy("Uploading…");
+    try { await api.uploadNoteAttachment(companyId, note.id, file); await load(); }
+    catch (e) { setBusy("Upload failed"); setTimeout(() => setBusy(""), 2000); return; }
+    setBusy("");
+  };
+  const open = async (att) => { try { const url = await api.attachmentUrl(att.storagePath); window.open(url, "_blank"); } catch {} };
+  const removeFile = async (att) => { if (confirm(`Delete ${att.fileName}?`)) { await api.deleteAttachment(att); await load(); } };
+
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{note.body}</div>
+      {files && files.length > 0 && (
+        <div style={{ display: "grid", gap: 5, marginTop: 10 }}>
+          {files.map((a) => (
+            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#F1F5F9", borderRadius: 7, padding: "6px 10px" }}>
+              <FileSpreadsheet size={13} color={EMAIL} />
+              <button onClick={() => open(a)} className="tap" style={{ flex: 1, textAlign: "left", background: "transparent", border: "none", color: EMAIL, fontSize: 12.5, fontWeight: 500, cursor: "pointer", padding: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.fileName}</button>
+              {a.uploaderId === effectiveUser.id && <button onClick={() => removeFile(a)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={12} /></button>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+        <span style={{ fontSize: 12, opacity: 0.5 }}>{nameOf(note.authorId) || "Someone"} · {new Date(note.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input ref={fileRef} type="file" style={{ display: "none" }} onChange={(e) => { onFile(e.target.files[0]); e.target.value = ""; }} />
+          <button onClick={() => fileRef.current?.click()} className="tap" style={{ display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: EMAIL, fontSize: 12, fontWeight: 600, cursor: "pointer", opacity: busy ? 0.6 : 1 }}>
+            <Plus size={12} /> {busy || "Attach file"}
+          </button>
+          {note.authorId === effectiveUser.id && <button onClick={() => onDelete(note.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={13} /></button>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3281,7 +3338,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners, dealUsers }) {
   const isBDR = liveUser && liveUser.role === "bdr";
   const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
-  const [f, setF] = useState(deal || { company: "", contact: "", contactEmail: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self" });
+  const [f, setF] = useState({ company: "", contact: "", contactEmail: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self", ...(deal || {}) });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
   const [history, setHistory] = useState(null);
@@ -3296,12 +3353,12 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
     if (!f.company.trim()) { setErr("Company / prospect name is required."); return; }
     if (isBDR && !f.taggedRepId) { setErr("Please choose who you're working for."); return; }
     // Admins/managers must pick an owner when creating a brand-new deal.
-    if (isAdminMgr && !deal && !f.ownerId) { setErr("Please choose which rep owns this deal."); return; }
+    if (isAdminMgr && !deal?.id && !f.ownerId) { setErr("Please choose which rep owns this deal."); return; }
     if (f.stage === "lost" && !String(f.lostReason || "").trim()) { setErr("Please choose a reason for the loss."); return; }
     const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
     // Clear the lost reason if the deal isn't actually lost.
     const lostReason = f.stage === "lost" ? String(f.lostReason || "").trim() : "";
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal ? { id: deal.id } : {}) });
+    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal?.id ? { id: deal.id } : {}) });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
@@ -3392,7 +3449,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
             </div>
           </div>
         )}
-        {deal && (
+        {deal?.id && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Notes &amp; history</div>
             <EntityNotes entityType="deal" entityId={deal.id} users={dealUsers} effectiveUser={liveUser} compact />
@@ -3402,9 +3459,9 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={submit} className="tap"
             style={{ flex: 1, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: 13, fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
-            {deal ? "Save changes" : "Create deal"}
+            {deal?.id ? "Save changes" : "Create deal"}
           </button>
-          {deal && (
+          {deal?.id && (
             <button onClick={() => { onDelete(deal.id); onClose(); }} className="tap"
               style={{ background: "transparent", color: "#B4453F", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "13px 16px", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
               <Trash2 size={16} />
