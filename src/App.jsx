@@ -408,8 +408,8 @@ export default function App() {
     const q = search.trim().toLowerCase();
     if (q.length < 2) return null;
     const hit = (s) => (s || "").toLowerCase().includes(q);
-    const cos = companies.filter((c) => hit(c.name) || hit(c.ban) || hit(c.fan) || hit(c.industry)).slice(0, 6)
-      .map((c) => ({ type: "Company", id: c.id, title: c.name, sub: c.industry || c.ban || "", onGo: () => { openCompanyById(c.id); setSearch(""); } }));
+    const cos = companies.filter((c) => hit(c.name) || hit(c.ban) || hit(c.fan)).slice(0, 6)
+      .map((c) => ({ type: "Company", id: c.id, title: c.name, sub: c.ban || "", onGo: () => { openCompanyById(c.id); setSearch(""); } }));
     const dls = visibleDeals.filter((d) => hit(d.company) || hit(d.contact)).slice(0, 6)
       .map((d) => ({ type: "Deal", id: d.id, title: d.company, sub: `${STAGE[d.stage]?.label || d.stage}${d.value ? ` · ${fmtMoney(d.value)}` : ""}`, onGo: () => { setView("pipeline"); setSearch(""); } }));
     const lds = scopedLeads.filter((l) => hit(l.company) || hit(l.contact) || hit(l.email)).slice(0, 6)
@@ -1159,7 +1159,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
 
   const saveInfo = async () => {
     setBusy("Saving…");
-    try { await api.updateCompany(companyId, { name: draft.name, industry: draft.industry, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes, ownerId: draft.ownerId, secondaryOwnerId: draft.secondaryOwnerId }); await refetch(); setEditing(false); }
+    try { await api.updateCompany(companyId, { name: draft.name, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes, ownerId: draft.ownerId, secondaryOwnerId: draft.secondaryOwnerId }); await refetch(); setEditing(false); }
     finally { setBusy(""); }
   };
 
@@ -1183,7 +1183,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
           <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg, ${BTN_A}, ${BTN_B})`, display: "grid", placeItems: "center", color: "#fff", fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600 }}>{(company.name[0] || "?").toUpperCase()}</div>
           <div>
             <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, margin: 0 }}>{company.name}</h1>
-            <div style={{ fontSize: 13, opacity: 0.6 }}>{company.industry || "No industry set"}{company.ban ? ` · BAN ${company.ban}` : ""}</div>
+            <div style={{ fontSize: 13, opacity: 0.6 }}>{company.ban ? `BAN ${company.ban}` : "No BAN set"}</div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
@@ -1214,7 +1214,6 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
             <div style={{ display: "grid", gap: 12 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Field label="Company name"><input value={draft.name || ""} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={inputStyle} /></Field>
-                <Field label="Industry"><input value={draft.industry || ""} onChange={(e) => setDraft({ ...draft, industry: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Website"><input value={draft.website || ""} onChange={(e) => setDraft({ ...draft, website: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inputStyle} /></Field>
                 <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
@@ -1263,7 +1262,6 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
           ) : (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 24px", marginBottom: 14 }}>
-                <InfoRow label="Industry" value={company.industry} />
                 <InfoRow label="Website" value={company.website} link />
                 <InfoRow label="Phone" value={company.phone} />
                 <InfoRow label="BAN" value={company.ban} />
