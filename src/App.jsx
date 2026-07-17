@@ -160,6 +160,32 @@ function zonedToUTC(dateStr, timeStr, zone) {
   return new Date(asUTC - (shown - asUTC));
 }
 
+// Build an Outlook web deeplink that opens a pre-filled calendar event (no file).
+function outlookDeeplink(deal, rep, manager, extraEmails, start) {
+  const repName = rep?.name || "";
+  const end = new Date(start.getTime() + 30 * 60000);
+  const fill = (t) => t
+    .replace(/{company}/g, deal.company || "")
+    .replace(/{contact}/g, deal.contact || "")
+    .replace(/{value}/g, deal.value ? fmtMoney(deal.value) : "")
+    .replace(/{rep}/g, repName)
+    .replace(/{date}/g, start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }))
+    .replace(/{time}/g, start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }));
+  const to = [deal.contactEmail, manager?.email, ...(extraEmails || "").split(/[,;\s]+/).map((s) => s.trim())]
+    .filter((e) => e && e.includes("@"));
+  const params = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: fill(APPT_TEMPLATE.subject),
+    body: fill(APPT_TEMPLATE.body),
+    startdt: start.toISOString(),
+    enddt: end.toISOString(),
+    location: deal.company || "",
+  });
+  if (to.length) params.set("to", to.join(","));
+  return `https://outlook.office.com/calendar/0/deeplink/compose?${params.toString()}`;
+}
+
 function downloadAppointmentICS(deal, rep, manager, extraEmails) {
   if (!deal.apptAt) return;
   const start = new Date(deal.apptAt);
@@ -2874,25 +2900,30 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
               </Field>
               <Field label="Additional invitees (optional)"><input type="text" value={form.apptEmail} onChange={(e) => setForm({ ...form, apptEmail: e.target.value })} style={inputStyle} placeholder="other@company.com, ..." /></Field>
             </div>
-            <button type="button"
-              disabled={!form.apptDate || !form.apptTime || !form.email.trim()}
-              onClick={() => {
-                const start = zonedToUTC(form.apptDate, form.apptTime, form.apptTz);
-                if (!start) return;
-                const rep = (users || []).find((u) => u.id === (form.workingFor && form.workingFor !== "self" ? form.workingFor : liveUser.id)) || liveUser;
-                const mgr = (users || []).find((u) => u.id === rep.managerId);
-                downloadAppointmentICS(
-                  { id: "appt", company: form.company.trim(), contact: form.contact.trim(), contactEmail: form.email.trim(), value: 0, apptAt: start.toISOString() },
-                  rep, mgr, form.apptEmail.trim()
-                );
-              }}
-              className="tap"
-              style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                background: form.apptDate && form.apptTime && form.email.trim() ? INK : LINE_C, color: form.apptDate && form.apptTime && form.email.trim() ? PAPER : "#8494A6",
-                border: "none", borderRadius: 9, padding: "10px 14px", fontSize: 13.5, fontWeight: 600,
-                cursor: form.apptDate && form.apptTime && form.email.trim() ? "pointer" : "default" }}>
-              <CalendarCheck size={15} /> Download Outlook invite
-            </button>
+            {(() => {
+              const ready = form.apptDate && form.apptTime && form.email.trim();
+              const buildStart = () => zonedToUTC(form.apptDate, form.apptTime, form.apptTz);
+              const rep = () => (users || []).find((u) => u.id === (form.workingFor && form.workingFor !== "self" ? form.workingFor : liveUser.id)) || liveUser;
+              const mgr = (r) => (users || []).find((u) => u.id === r.managerId);
+              const dealObj = (startISO) => ({ id: "appt", company: form.company.trim(), contact: form.contact.trim(), contactEmail: form.email.trim(), value: 0, apptAt: startISO });
+              return (
+                <>
+                  <button type="button" disabled={!ready}
+                    onClick={() => { const start = buildStart(); if (!start) return; const r = rep(); window.open(outlookDeeplink(dealObj(start.toISOString()), r, mgr(r), form.apptEmail.trim(), start), "_blank"); }}
+                    className="tap"
+                    style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      background: ready ? INK : LINE_C, color: ready ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "10px 14px", fontSize: 13.5, fontWeight: 600, cursor: ready ? "pointer" : "default" }}>
+                    <CalendarCheck size={15} /> Open invite in Outlook
+                  </button>
+                  <button type="button" disabled={!ready}
+                    onClick={() => { const start = buildStart(); if (!start) return; const r = rep(); downloadAppointmentICS(dealObj(start.toISOString()), r, mgr(r), form.apptEmail.trim()); }}
+                    className="tap"
+                    style={{ width: "100%", marginTop: 8, background: "transparent", color: ready ? EMAIL : "#8494A6", border: `1px solid ${ready ? EMAIL + "55" : LINE_C}`, borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 600, cursor: ready ? "pointer" : "default" }}>
+                    or download .ics file
+                  </button>
+                </>
+              );
+            })()}
             {(!form.apptDate || !form.apptTime || !form.email.trim()) && <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0", textAlign: "center" }}>Add a date, time, and the customer's Email above to enable.</p>}
           </div>
         )}
