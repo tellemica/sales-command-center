@@ -29,6 +29,17 @@ const APPT = "#0E9EE1";     // cyan — appointments (the goal keeps the accent)
 const LINE_C = "#DCE4EC";
 
 const TODAY = () => new Date().toISOString().slice(0, 10);
+// Format a phone as (111) 111-1111 as the user types, keeping only digits.
+// Drops a leading US country code "1" if present, so 16105550100 -> (610) 555-0100.
+const formatPhone = (val) => {
+  let d = (val || "").replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "1") d = d.slice(1);
+  d = d.slice(0, 10);
+  if (d.length === 0) return "";
+  if (d.length < 4) return `(${d}`;
+  if (d.length < 7) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+  return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+};
 // MM-DD-YYYY for the bulk-upload template (display format).
 const TODAY_US = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1215,7 +1226,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Field label="Company name"><input value={draft.name || ""} onChange={(e) => setDraft({ ...draft, name: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Website"><input value={draft.website || ""} onChange={(e) => setDraft({ ...draft, website: e.target.value })} style={inputStyle} /></Field>
-                <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
                 <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
                 <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
                 <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
@@ -1418,7 +1429,7 @@ function ContactModal({ contact, onSave, onClose }) {
         <Field label="Title"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} style={inputStyle} /></Field>
+          <Field label="Phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
         </div>
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap" style={{ width: "100%", background: INK, color: PAPER, border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Save contact</button>
@@ -2853,6 +2864,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }, [allEntries, entries]);
   const [showCarrier, setShowCarrier] = useState(false);
+  const [extraContacts, setExtraContacts] = useState([]); // additional company contacts to save on submit
   const carrierSuggestions = form.carrierRep.trim().length >= 1
     ? carrierRepIndex.filter((r) => r.toLowerCase().includes(form.carrierRep.trim().toLowerCase()) && r.toLowerCase() !== form.carrierRep.trim().toLowerCase()).slice(0, 6)
     : [];
@@ -2909,7 +2921,18 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         });
       } catch (e) { /* deal creation is best-effort; activity already saved */ }
     }
+    // Save any additional company contacts entered on this activity.
+    const validExtra = extraContacts.filter((c) => c.name.trim() || c.email.trim() || c.phone.trim());
+    if (validExtra.length) {
+      try {
+        const companyId = await api.findOrCreateCompany(form.company.trim());
+        for (const c of validExtra) {
+          await api.saveContact(companyId, { name: c.name.trim() || c.email.trim(), phone: c.phone.trim(), email: c.email.trim() });
+        }
+      } catch (e) { /* best-effort; activity already saved */ }
+    }
     setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "" });
+    setExtraContacts([]);
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
 
@@ -2981,6 +3004,25 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
+        <div style={{ marginBottom: 14 }}>
+          {extraContacts.map((c, i) => (
+            <div key={i} style={{ background: "#F8FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 10, marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6" }}>Additional contact {i + 1}</span>
+                <button type="button" onClick={() => setExtraContacts((arr) => arr.filter((_, j) => j !== i))} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, display: "flex" }}><X size={14} /></button>
+              </div>
+              <input value={c.name} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} style={{ ...inputStyle, marginBottom: 8 }} placeholder="Name / title" />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <input value={c.phone} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, phone: formatPhone(e.target.value) } : x))} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Phone" />
+                <input value={c.email} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, email: e.target.value } : x))} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Email" />
+              </div>
+            </div>
+          ))}
+          <button type="button" onClick={() => setExtraContacts((arr) => [...arr, { name: "", phone: "", email: "" }])} className="tap"
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px dashed ${LINE_C}`, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 600, color: EMAIL, cursor: "pointer", width: "100%", justifyContent: "center" }}>
+            <Plus size={13} /> Add another contact
+          </button>
+        </div>
         <Field label="Carrier Rep (AT&T, VZW, TMo)">
           <div style={{ position: "relative" }}>
             <input value={form.carrierRep}
@@ -3001,7 +3043,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           </div>
         </Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
+          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
           <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
         </div>
         <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
