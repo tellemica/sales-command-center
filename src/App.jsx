@@ -2743,6 +2743,20 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
   }, [allEntries, entries]);
 
+  // Remembered carrier rep names from past activity, for autocomplete.
+  const carrierRepIndex = useMemo(() => {
+    const seen = new Map();
+    (allEntries || entries).forEach((e) => {
+      const r = (e.carrierRep || "").trim();
+      if (r && !seen.has(r.toLowerCase())) seen.set(r.toLowerCase(), r);
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [allEntries, entries]);
+  const [showCarrier, setShowCarrier] = useState(false);
+  const carrierSuggestions = form.carrierRep.trim().length >= 1
+    ? carrierRepIndex.filter((r) => r.toLowerCase().includes(form.carrierRep.trim().toLowerCase()) && r.toLowerCase() !== form.carrierRep.trim().toLowerCase()).slice(0, 6)
+    : [];
+
   // When an appointment is first indicated, seed the date/time with real
   // committed values (today + next half hour) so the fields show black,
   // selected values — not the browser's faded placeholder — and the invite
@@ -2867,7 +2881,25 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
-        <Field label="Carrier Rep (AT&T, VZW, TMo)"><input value={form.carrierRep} onChange={(e) => setForm({ ...form, carrierRep: e.target.value })} style={inputStyle} placeholder="Name of carrier rep" /></Field>
+        <Field label="Carrier Rep (AT&T, VZW, TMo)">
+          <div style={{ position: "relative" }}>
+            <input value={form.carrierRep}
+              onChange={(e) => { setForm({ ...form, carrierRep: e.target.value }); setShowCarrier(true); }}
+              onFocus={() => setShowCarrier(true)}
+              onBlur={() => setTimeout(() => setShowCarrier(false), 150)}
+              style={inputStyle} placeholder="Name of carrier rep" />
+            {showCarrier && carrierSuggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, boxShadow: "0 10px 28px rgba(11,42,74,.12)", zIndex: 30, overflow: "hidden" }}>
+                {carrierSuggestions.map((r) => (
+                  <button key={r} type="button" onMouseDown={(ev) => { ev.preventDefault(); setForm((f) => ({ ...f, carrierRep: r })); setShowCarrier(false); }} className="tap"
+                    style={{ display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", padding: "9px 13px", fontSize: 13.5, cursor: "pointer" }}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
           <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
@@ -3421,7 +3453,84 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
       ))}
 
       {modal && <UserModal user={modal.user} salesReps={salesReps} onSave={saveUser} onClose={() => setModal(null)} />}
+
+      <div style={{ marginTop: 28 }}>
+        <CarrierRepManager saveEntries={saveEntries} />
+      </div>
     </>
+  );
+}
+
+function CarrierRepManager({ saveEntries }) {
+  const [reps, setReps] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [renaming, setRenaming] = useState(null); // { name, value }
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => { try { setReps(await api.listCarrierReps()); } catch { setReps([]); } };
+  useEffect(() => { load(); }, []);
+
+  const toggle = (name) => setSelected((p) => { const n = new Set(p); n.has(name) ? n.delete(name) : n.add(name); return n; });
+
+  const doRename = async () => {
+    if (!renaming.value.trim() || renaming.value.trim() === renaming.name) { setRenaming(null); return; }
+    setBusy(true);
+    try { await saveEntries(() => api.renameCarrierRep(renaming.name, renaming.value)); await load(); setRenaming(null); }
+    finally { setBusy(false); }
+  };
+
+  const doMerge = async () => {
+    const names = [...selected];
+    if (names.length < 2) return;
+    const into = prompt(`Merge these ${names.length} names into one. Type the name to keep exactly:\n\n${names.join("\n")}`, names[0]);
+    if (!into || !into.trim()) return;
+    const from = names.filter((n) => n !== into.trim());
+    setBusy(true);
+    try { await saveEntries(() => api.mergeCarrierReps(from, into.trim())); setSelected(new Set()); await load(); }
+    finally { setBusy(false); }
+  };
+
+  const doDelete = async (name) => {
+    if (!confirm(`Remove "${name}" from all activities? This clears the carrier rep on those records (the activities themselves stay).`)) return;
+    setBusy(true);
+    try { await saveEntries(() => api.deleteCarrierRep(name)); await load(); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Panel title="Carrier rep roster" icon={UserCheck} action={selected.size >= 2 ? (
+      <button onClick={doMerge} disabled={busy} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        Merge {selected.size} selected
+      </button>
+    ) : null}>
+      <p style={{ fontSize: 12.5, opacity: 0.6, margin: "0 0 14px" }}>Names typed on activities. Rename to fix typos, select 2+ and merge to combine duplicates, or delete to clear one everywhere.</p>
+      {reps === null ? <div style={{ opacity: 0.4, fontSize: 13, padding: 8 }}>Loading…</div>
+        : reps.length === 0 ? <Empty msg="No carrier reps recorded yet." /> : (
+        <div style={{ display: "grid", gap: 6 }}>
+          {reps.map((r) => (
+            <div key={r.name} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", border: `1px solid ${selected.has(r.name) ? EMAIL : LINE_C}`, borderRadius: 9, padding: "9px 12px" }}>
+              <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggle(r.name)} style={{ cursor: "pointer" }} />
+              {renaming?.name === r.name ? (
+                <>
+                  <input autoFocus value={renaming.value} onChange={(e) => setRenaming({ ...renaming, value: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === "Enter") doRename(); if (e.key === "Escape") setRenaming(null); }}
+                    style={{ ...inputStyle, marginBottom: 0, flex: 1 }} />
+                  <button onClick={doRename} disabled={busy} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 7, padding: "6px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Save</button>
+                  <button onClick={() => setRenaming(null)} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 7, padding: "6px 10px", fontSize: 12.5, cursor: "pointer" }}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 500 }}>{r.name}</span>
+                  <span style={{ fontSize: 12, opacity: 0.5 }}>{r.count} {r.count === 1 ? "activity" : "activities"}</span>
+                  <button onClick={() => setRenaming({ name: r.name, value: r.name })} className="tap" style={iconBtn} title="Rename"><Pencil size={14} /></button>
+                  <button onClick={() => doDelete(r.name)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
