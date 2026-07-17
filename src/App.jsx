@@ -3004,6 +3004,10 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
+          <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
+        </div>
         <div style={{ marginBottom: 14 }}>
           {extraContacts.map((c, i) => (
             <div key={i} style={{ background: "#F8FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 10, marginBottom: 8 }}>
@@ -3042,10 +3046,6 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             )}
           </div>
         </Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
-          <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
-        </div>
         <Field label="Date"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="Calls"><input type="number" min="0" placeholder="0" value={form.calls} onChange={(e) => setForm({ ...form, calls: e.target.value })} style={inputStyle} /></Field>
