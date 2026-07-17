@@ -392,11 +392,31 @@ export async function listCompanyNotes(companyId) {
 }
 export async function addCompanyNote(companyId, body) {
   const { data: me } = await supabase.auth.getUser();
-  const { error } = await supabase.from("company_notes").insert({ company_id: companyId, author_id: me?.user?.id || null, body });
+  const { data, error } = await supabase.from("company_notes").insert({ company_id: companyId, author_id: me?.user?.id || null, body }).select().single();
   if (error) throw error;
+  return toCamelNote(data);
 }
 export async function deleteCompanyNote(id) {
   const { error } = await supabase.from("company_notes").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// Files attached to a specific note (reuses the company-files storage bucket).
+export async function listNoteAttachments(noteId) {
+  const { data, error } = await supabase.from("company_attachments").select("*").eq("note_id", noteId).order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelAttachment);
+}
+export async function uploadNoteAttachment(companyId, noteId, file) {
+  const { data: me } = await supabase.auth.getUser();
+  const safe = file.name.replace(/[^\w.\-]+/g, "_");
+  const path = `${companyId}/notes/${noteId}/${Date.now()}_${safe}`;
+  const up = await supabase.storage.from("company-files").upload(path, file, { upsert: false });
+  if (up.error) throw up.error;
+  const { error } = await supabase.from("company_attachments").insert({
+    company_id: companyId, note_id: noteId, uploader_id: me?.user?.id || null,
+    file_name: file.name, storage_path: path, size_bytes: file.size || 0,
+  });
   if (error) throw error;
 }
 
@@ -421,10 +441,11 @@ export async function deleteEntityNote(id) {
 }
 
 // ---- Attachments (Storage bucket: company-files) ----
-const toCamelAttachment = (a) => a && ({ id: a.id, companyId: a.company_id, uploaderId: a.uploader_id, fileName: a.file_name, storagePath: a.storage_path, sizeBytes: a.size_bytes || 0, createdAt: a.created_at });
+const toCamelAttachment = (a) => a && ({ id: a.id, companyId: a.company_id, noteId: a.note_id || null, uploaderId: a.uploader_id, fileName: a.file_name, storagePath: a.storage_path, sizeBytes: a.size_bytes || 0, createdAt: a.created_at });
 
 export async function listAttachments(companyId) {
-  const { data, error } = await supabase.from("company_attachments").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+  // Only company-level files (note-scoped files live with their notes).
+  const { data, error } = await supabase.from("company_attachments").select("*").eq("company_id", companyId).is("note_id", null).order("created_at", { ascending: false });
   if (error) throw error;
   return (data || []).map(toCamelAttachment);
 }
