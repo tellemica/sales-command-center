@@ -1431,14 +1431,44 @@ function ContactModal({ contact, onSave, onClose }) {
 
 function NotesSection({ companyId, notes, nameOf, effectiveUser, reload }) {
   const [text, setText] = useState("");
+  const [staged, setStaged] = useState([]); // files chosen before the note is saved
   const [busy, setBusy] = useState(false);
-  const add = async () => { if (!text.trim()) return; setBusy(true); try { await api.addCompanyNote(companyId, text.trim()); setText(""); await reload(); } finally { setBusy(false); } };
+  const composeFileRef = React.useRef(null);
+
+  const add = async () => {
+    if (!text.trim() && staged.length === 0) return;
+    setBusy(true);
+    try {
+      // Create the note first so we have an id, then upload any staged files onto it.
+      const note = await api.addCompanyNote(companyId, text.trim() || "(file attached)");
+      for (const f of staged) await api.uploadNoteAttachment(companyId, note.id, f);
+      setText(""); setStaged([]);
+      await reload();
+    } finally { setBusy(false); }
+  };
   const del = async (id) => { if (confirm("Delete this note and its attachments?")) { await api.deleteCompanyNote(id); await reload(); } };
+
   return (
     <Panel title="Notes" icon={Pencil}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" style={{ ...inputStyle, marginBottom: 0, resize: "vertical" }} />
-        <button onClick={add} disabled={busy || !text.trim()} className="tap" style={{ background: text.trim() && !busy ? INK : LINE_C, color: text.trim() && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "0 18px", fontSize: 14, fontWeight: 600, cursor: text.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>Add</button>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" style={{ ...inputStyle, marginBottom: 0, resize: "vertical" }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <button onClick={add} disabled={busy || (!text.trim() && staged.length === 0)} className="tap" style={{ background: (text.trim() || staged.length) && !busy ? INK : LINE_C, color: (text.trim() || staged.length) && !busy ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: (text.trim() || staged.length) ? "pointer" : "default", whiteSpace: "nowrap" }}>{busy ? "Saving…" : "Add"}</button>
+            <input ref={composeFileRef} type="file" style={{ display: "none" }} onChange={(e) => { if (e.target.files[0]) setStaged((s) => [...s, e.target.files[0]]); e.target.value = ""; }} />
+            <button onClick={() => composeFileRef.current?.click()} className="tap" title="Attach a file to this note" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: "transparent", border: `1px solid ${LINE_C}`, color: EMAIL, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}><Plus size={13} /> Attach</button>
+          </div>
+        </div>
+        {staged.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+            {staged.map((f, i) => (
+              <span key={i} style={{ display: "flex", alignItems: "center", gap: 6, background: "#F1F5F9", border: `1px solid ${LINE_C}`, borderRadius: 7, padding: "4px 9px", fontSize: 12.5 }}>
+                <FileSpreadsheet size={12} color={EMAIL} /> {f.name}
+                <button onClick={() => setStaged((s) => s.filter((_, j) => j !== i))} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, padding: 0, display: "flex" }}><X size={12} /></button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       {notes.length === 0 ? <Empty msg="No notes yet." /> : (
         <div style={{ display: "grid", gap: 8 }}>
