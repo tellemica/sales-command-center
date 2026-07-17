@@ -133,6 +133,21 @@ const icsStamp = (d) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z"
 const toLocalInput = (iso) => { const d = new Date(iso); const off = d.getTimezoneOffset() * 60000; return new Date(d - off).toISOString().slice(0, 16); };
 
 // US timezones reps pick from. `zone` is an IANA name used to compute the correct UTC instant.
+// Convert stored "HH:MM" (24h) to { h12, min, ap } for the dropdowns, and back.
+const parseTime12 = (hhmm) => {
+  if (!hhmm) return { h12: "", min: "", ap: "" };
+  const [h, m] = hhmm.split(":").map(Number);
+  const ap = h >= 12 ? "PM" : "AM";
+  let h12 = h % 12; if (h12 === 0) h12 = 12;
+  return { h12: String(h12), min: String(m).padStart(2, "0"), ap };
+};
+const buildTime24 = ({ h12, min, ap }) => {
+  if (!h12 || !min || !ap) return "";
+  let h = Number(h12) % 12;
+  if (ap === "PM") h += 12;
+  return `${String(h).padStart(2, "0")}:${min}`;
+};
+
 const US_TIMEZONES = [
   { id: "America/New_York", label: "Eastern (ET)" },
   { id: "America/Chicago", label: "Central (CT)" },
@@ -2918,7 +2933,42 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             <p style={{ fontSize: 12, opacity: 0.6, margin: "0 0 10px" }}>Set a date, time, and timezone, then download the Outlook invite below. The invite goes to the <b>Email</b> above{form.email.trim() ? <> (<span style={{ color: EMAIL }}>{form.email.trim()}</span>)</> : <span style={{ color: "#B4453F" }}> — none entered yet, add one above</span>}, plus you and your manager.</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Appointment date"><input type="date" value={form.apptDate} onChange={(e) => setForm({ ...form, apptDate: e.target.value })} style={inputStyle} /></Field>
-              <Field label="Time"><input type="time" value={form.apptTime} onChange={(e) => setForm({ ...form, apptTime: e.target.value })} style={inputStyle} /></Field>
+              <Field label="Time">
+                {(() => {
+                  const t = parseTime12(form.apptTime);
+                  const setPart = (part, val) => setForm((f) => ({ ...f, apptTime: buildTime24({ ...parseTime12(f.apptTime), [part]: val }) }));
+                  const selStyle = { ...inputStyle, marginBottom: 0, appearance: "none", cursor: "pointer", paddingRight: 26 };
+                  const wrap = { position: "relative", flex: 1 };
+                  const chev = { position: "absolute", right: 8, top: 12, pointerEvents: "none", opacity: 0.5 };
+                  return (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <div style={wrap}>
+                        <select value={t.h12} onChange={(e) => setPart("h12", e.target.value)} style={selStyle}>
+                          <option value="" disabled>Hr</option>
+                          {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((h) => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <ChevronDown size={13} style={chev} />
+                      </div>
+                      <div style={wrap}>
+                        <select value={t.min} onChange={(e) => setPart("min", e.target.value)} style={selStyle}>
+                          <option value="" disabled>Min</option>
+                          <option value="00">00</option>
+                          <option value="30">30</option>
+                        </select>
+                        <ChevronDown size={13} style={chev} />
+                      </div>
+                      <div style={wrap}>
+                        <select value={t.ap} onChange={(e) => setPart("ap", e.target.value)} style={selStyle}>
+                          <option value="" disabled>AM/PM</option>
+                          <option value="AM">AM</option>
+                          <option value="PM">PM</option>
+                        </select>
+                        <ChevronDown size={13} style={chev} />
+                      </div>
+                    </div>
+                  );
+                })()}
+              </Field>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Field label="Timezone">
