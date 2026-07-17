@@ -309,7 +309,7 @@ export async function clearUserGoal(userId) {
 // CRM: Companies, Contacts, Notes, Attachments
 // ============================================================
 const toCamelCompany = (c) => c && ({
-  id: c.id, name: c.name, nameKey: c.name_key, industry: c.industry || "",
+  id: c.id, name: c.name, nameKey: c.name_key,
   website: c.website || "", phone: c.phone || "", address: c.address || "",
   ban: c.ban || "", fan: c.fan || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
 });
@@ -329,7 +329,7 @@ export async function getCompany(id) {
 // Update editable company fields.
 export async function updateCompany(id, patch) {
   const db = {};
-  ["name", "industry", "website", "phone", "address", "ban", "fan", "notes"].forEach((k) => {
+  ["name", "website", "phone", "address", "ban", "fan", "notes"].forEach((k) => {
     if (patch[k] !== undefined) db[k] = patch[k];
   });
   // Ownership: null out empty strings so the FK stays clean.
