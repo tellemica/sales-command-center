@@ -100,6 +100,39 @@ export async function listEntries() {
   return data.map(toCamelEntry);
 }
 
+// ---- Carrier rep roster (managed via the carrier_rep field on activities) ----
+// Distinct carrier rep names with a usage count, for the admin roster screen.
+export async function listCarrierReps() {
+  const { data, error } = await supabase.from("entries").select("carrier_rep").not("carrier_rep", "is", null);
+  if (error) throw error;
+  const counts = new Map();
+  (data || []).forEach((r) => {
+    const name = (r.carrier_rep || "").trim();
+    if (name) counts.set(name, (counts.get(name) || 0) + 1);
+  });
+  return [...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Rename every activity using `oldName` to `newName` (case-insensitive match).
+export async function renameCarrierRep(oldName, newName) {
+  const { error } = await supabase.from("entries").update({ carrier_rep: newName.trim() }).ilike("carrier_rep", oldName.trim());
+  if (error) throw error;
+}
+
+// Merge: repoint all activities using any of `fromNames` onto `intoName`.
+export async function mergeCarrierReps(fromNames, intoName) {
+  for (const nm of fromNames) {
+    const { error } = await supabase.from("entries").update({ carrier_rep: intoName.trim() }).ilike("carrier_rep", nm.trim());
+    if (error) throw error;
+  }
+}
+
+// Delete: clear the carrier rep from all activities using `name`.
+export async function deleteCarrierRep(name) {
+  const { error } = await supabase.from("entries").update({ carrier_rep: null }).ilike("carrier_rep", name.trim());
+  if (error) throw error;
+}
+
 // Promote a contact captured on an activity into the company's Contacts roster,
 // but only if one with the same name doesn't already exist for that company.
 // Best-effort: never let a contact-sync failure block the activity save.
