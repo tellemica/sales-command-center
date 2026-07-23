@@ -1985,6 +1985,7 @@ function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, 
   const repUsers = scopeUsers.filter((u) => u.role === "bdr" || u.role === "sales");
 
   const [repFilter, setRepFilter] = useState("all");
+  const [drill, setDrill] = useState(null); // "calls" | "emails" | "appts" | "outreach"
   const [month, setMonth] = useState(CURRENT_MONTH);
   const monthOptions = buildMonthOptions();
   const isCurrentMonth = month === CURRENT_MONTH;
@@ -2118,11 +2119,95 @@ function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, 
       </div>
 
       <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
-        <StatCard icon={Phone} color={CALL} label="Calls" value={totals.calls} sub={`${callConv}% → appt`} />
-        <StatCard icon={Mail} color={EMAIL} label="Emails" value={totals.emails} sub={`${emailConv}% → appt`} />
-        <StatCard icon={CalendarCheck} color={APPT} label="Appointments Set" value={totals.appts} sub={`${conv}% overall conv.`} />
-        <StatCard icon={TrendingUp} color={INK} label="Total Outreach" value={outreach} sub={`${scoped.length ? (outreach / scoped.length).toFixed(0) : 0} avg/session`} />
+        <StatCard icon={Phone} color={CALL} label="Calls" value={totals.calls} sub={`${callConv}% → appt`}
+          onClick={() => setDrill(drill === "calls" ? null : "calls")} active={drill === "calls"} />
+        <StatCard icon={Mail} color={EMAIL} label="Emails" value={totals.emails} sub={`${emailConv}% → appt`}
+          onClick={() => setDrill(drill === "emails" ? null : "emails")} active={drill === "emails"} />
+        <StatCard icon={CalendarCheck} color={APPT} label="Appointments Set" value={totals.appts} sub={`${conv}% overall conv.`}
+          onClick={() => setDrill(drill === "appts" ? null : "appts")} active={drill === "appts"} />
+        <StatCard icon={TrendingUp} color={INK} label="Total Outreach" value={outreach} sub={`${scoped.length ? (outreach / scoped.length).toFixed(0) : 0} avg/session`}
+          onClick={() => setDrill(drill === "outreach" ? null : "outreach")} active={drill === "outreach"} />
       </div>
+
+      {drill && (() => {
+        const meta = {
+          calls: { label: "Calls", color: CALL, field: "calls" },
+          emails: { label: "Emails", color: EMAIL, field: "emails" },
+          appts: { label: "Appointments", color: APPT, field: "appts" },
+          outreach: { label: "Total outreach", color: INK, field: null },
+        }[drill];
+        // Rows that contributed to this number, newest first.
+        const contributing = scoped
+          .filter((e) => meta.field ? (e[meta.field] || 0) > 0 : ((e.calls || 0) + (e.emails || 0)) > 0)
+          .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+        const totalFor = (e) => meta.field ? (e[meta.field] || 0) : (e.calls || 0) + (e.emails || 0);
+        const sum = contributing.reduce((a, e) => a + totalFor(e), 0);
+        const nameOfUser = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : "—"; };
+
+        const exportDrill = () => {
+          const data = contributing.map((e) => ({
+            Date: e.date, Company: e.company || "", Contact: e.contact || "",
+            Calls: e.calls || 0, Emails: e.emails || 0, Appointments: e.appts || 0,
+            [meta.label]: totalFor(e),
+            "Logged by": nameOfUser(e.userId), Notes: e.notes || "",
+          }));
+          const ws = XLSX.utils.json_to_sheet(data);
+          ws["!cols"] = [{ wch: 11 }, { wch: 26 }, { wch: 20 }, { wch: 7 }, { wch: 8 }, { wch: 13 }, { wch: 12 }, { wch: 18 }, { wch: 40 }];
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, meta.label);
+          XLSX.writeFile(wb, `tellemica-${drill}-${month}.xlsx`);
+        };
+
+        return (
+          <div style={{ background: CARD, border: `1px solid ${meta.color}44`, borderRadius: 14, marginBottom: 16, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 18px", borderBottom: `1px solid ${LINE_C}`, background: meta.color + "0c", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ fontSize: 14.5, fontWeight: 700, color: meta.color }}>{meta.label}: {sum.toLocaleString()}</span>
+                <span style={{ fontSize: 12.5, opacity: 0.55 }}>from {contributing.length} {contributing.length === 1 ? "session" : "sessions"} · {monthLabel(month)}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button onClick={exportDrill} disabled={!contributing.length} className="tap"
+                  style={{ display: "flex", alignItems: "center", gap: 6, background: contributing.length ? INK : LINE_C, color: contributing.length ? PAPER : "#8494A6", border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, cursor: contributing.length ? "pointer" : "default" }}>
+                  <Download size={13} /> Export
+                </button>
+                <button onClick={() => setDrill(null)} className="tap" title="Close"
+                  style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, display: "flex" }}><X size={17} /></button>
+              </div>
+            </div>
+            {contributing.length === 0 ? (
+              <Empty msg={`No ${meta.label.toLowerCase()} recorded for this period.`} />
+            ) : (
+              <div style={{ overflowX: "auto", maxHeight: 420 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
+                  <thead>
+                    <tr style={{ background: "#F1F5F9", position: "sticky", top: 0, zIndex: 1 }}>
+                      {[["Date", 105], ["Company", null], ["Contact", 160], [meta.label, 90], ["Logged by", 150]].map(([h, w]) => (
+                        <th key={h} style={{ textAlign: h === meta.label ? "center" : "left", padding: "10px 12px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: "#5A6B7B", whiteSpace: "nowrap", borderBottom: `1px solid ${LINE_C}`, ...(w ? { width: w } : {}) }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contributing.map((e) => (
+                      <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
+                        <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>{e.date}</td>
+                        <td style={{ padding: "10px 12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.company || ""}>
+                          {e.company ? (
+                            <button onClick={() => onOpenCompany(e.companyId, e.company)} className="tap"
+                              style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, maxWidth: "100%", display: "block", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.company}</button>
+                          ) : "—"}
+                        </td>
+                        <td style={{ padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.contact || ""}>{e.contact || "—"}</td>
+                        <td style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: meta.color }}>{totalFor(e)}</td>
+                        <td style={{ padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={nameOfUser(e.userId)}>{nameOfUser(e.userId)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <GoalBars totals={totals} targets={targets} isTeam={repFilter === "all" && role !== "bdr"}
         pace={isCurrentMonth ? (() => { const now = new Date(); const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(); return now.getDate() / dim; })() : null} />
@@ -2340,14 +2425,18 @@ function WeeklyDigest({ entries, deals, users }) {
   );
 }
 
-function StatCard({ icon: Icon, color, label, value, sub, raw }) {
+function StatCard({ icon: Icon, color, label, value, sub, raw, onClick, active }) {
+  const clickable = typeof onClick === "function";
   return (
-    <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 18 }}>
+    <div onClick={onClick} className={clickable ? "tap" : undefined}
+      style={{ background: CARD, border: `1px solid ${active ? color : LINE_C}`, borderRadius: 14, padding: 18,
+        cursor: clickable ? "pointer" : "default", boxShadow: active ? `0 0 0 2px ${color}22` : "none", position: "relative" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
         <span style={{ width: 32, height: 32, borderRadius: 9, background: color + "18", display: "grid", placeItems: "center" }}>
           <Icon size={17} color={color} />
         </span>
         <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.65 }}>{label}</span>
+        {clickable && <ChevronRight size={14} style={{ marginLeft: "auto", opacity: active ? 0.9 : 0.35, color, transform: active ? "rotate(90deg)" : "none", transition: "transform .15s ease" }} />}
       </div>
       <div style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 600, lineHeight: 1 }}>{raw ? value : value.toLocaleString()}</div>
       <div style={{ fontSize: 12.5, opacity: 0.55, marginTop: 6 }}>{sub}</div>
