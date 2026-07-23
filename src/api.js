@@ -153,6 +153,7 @@ async function syncContactFromEntry(entry) {
       name,
       phone: entry.phone || "",
       email: entry.email || "",
+      created_by: entry.userId || null,
     });
   } catch {
     /* ignore — activity is already saved */
@@ -360,7 +361,7 @@ export async function findOrCreateCompany(name) {
 }
 
 // ---- Contacts ----
-const toCamelContact = (c) => c && ({ id: c.id, companyId: c.company_id, name: c.name, title: c.title || "", phone: c.phone || "", email: c.email || "", notes: c.notes || "", createdAt: c.created_at });
+const toCamelContact = (c) => c && ({ id: c.id, companyId: c.company_id, name: c.name, title: c.title || "", phone: c.phone || "", cellPhone: c.cell_phone || "", email: c.email || "", notes: c.notes || "", createdBy: c.created_by || "", createdAt: c.created_at });
 
 export async function listContacts(companyId) {
   const { data, error } = await supabase.from("company_contacts").select("*").eq("company_id", companyId).order("name");
@@ -368,14 +369,26 @@ export async function listContacts(companyId) {
   return (data || []).map(toCamelContact);
 }
 export async function saveContact(companyId, contact) {
-  const row = { company_id: companyId, name: contact.name, title: contact.title || "", phone: contact.phone || "", email: contact.email || "", notes: contact.notes || "" };
+  const { data: me } = await supabase.auth.getUser();
+  const row = { company_id: companyId, name: contact.name, title: contact.title || "", phone: contact.phone || "", cell_phone: contact.cellPhone || "", email: contact.email || "", notes: contact.notes || "" };
   if (contact.id) {
     const { error } = await supabase.from("company_contacts").update(row).eq("id", contact.id);
     if (error) throw error;
   } else {
-    const { error } = await supabase.from("company_contacts").insert(row);
+    const { error } = await supabase.from("company_contacts").insert({ ...row, created_by: me?.user?.id || null });
     if (error) throw error;
   }
+}
+
+// Every contact the caller can see, with its company name attached.
+// Scoping (own vs all) is applied in the app based on role.
+export async function listAllContacts() {
+  const { data, error } = await supabase
+    .from("company_contacts")
+    .select("*, companies(name)")
+    .order("name");
+  if (error) throw error;
+  return (data || []).map((c) => ({ ...toCamelContact(c), companyName: c.companies?.name || "" }));
 }
 export async function deleteContact(id) {
   const { error } = await supabase.from("company_contacts").delete().eq("id", id);
