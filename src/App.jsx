@@ -1676,7 +1676,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
     ["emails", "Emails", true],
     ["appts", "Appts", true],
     ["logged", "Logged by", false],
-    ["rep", "Tellemica Sales Rep", false],
+    ["rep", "Sales Rep", false],
   ];
 
   const [open, setOpen] = useState(() => new Set());
@@ -1700,13 +1700,14 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
         </button>
       </div>
       <div style={{ overflowX: "auto", maxHeight: compact ? 420 : "none" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: "#F1F5F9", position: "sticky", top: 0, zIndex: 1 }}>
               <th style={{ width: 34, borderBottom: `1px solid ${LINE_C}` }} />
               {headCols.map(([k, label, isNum]) => (
                 <th key={k} onClick={() => setSort(k)}
-                  style={{ textAlign: isNum ? "center" : "left", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer", borderBottom: `1px solid ${LINE_C}` }}>
+                  style={{ textAlign: isNum ? "center" : "left", padding: "10px 12px", fontWeight: 700, fontSize: 11.5, letterSpacing: 0.4, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer", borderBottom: `1px solid ${LINE_C}`,
+                    ...(k === "calls" || k === "appts" ? { width: 60 } : k === "emails" ? { width: 68 } : k === "date" ? { width: 105 } : {}) }}>
                   {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                 </th>
               ))}
@@ -1724,15 +1725,15 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
                     <td style={{ padding: cellPad, textAlign: "center" }}>
                       <ChevronRight size={15} style={{ opacity: 0.5, transition: "transform .15s ease", transform: isOpen ? "rotate(90deg)" : "none" }} />
                     </td>
-                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{e.date}</td>
-                    <td style={{ padding: cellPad, fontWeight: 600, whiteSpace: "nowrap" }}>
-                      {e.company ? (onOpenCompany ? <button onClick={(ev) => { ev.stopPropagation(); onOpenCompany(e.companyId, e.company); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{e.company}</button> : e.company) : "—"}
+                    <td style={{ padding: cellPad, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{e.date}</td>
+                    <td style={{ padding: cellPad, fontWeight: 600, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={e.company || ""}>
+                      {e.company ? (onOpenCompany ? <button onClick={(ev) => { ev.stopPropagation(); onOpenCompany(e.companyId, e.company); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block", textAlign: "left" }}>{e.company}</button> : e.company) : "—"}
                     </td>
-                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.calls || 0}</td>
-                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.emails || 0}</td>
-                    <td style={{ padding: cellPad, textAlign: "center" }}>{e.appts || 0}</td>
-                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{nameOf(e.userId) || "—"}</td>
-                    <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{repOf(e)}</td>
+                    <td style={{ padding: cellPad, textAlign: "center", width: 60 }}>{e.calls || 0}</td>
+                    <td style={{ padding: cellPad, textAlign: "center", width: 68 }}>{e.emails || 0}</td>
+                    <td style={{ padding: cellPad, textAlign: "center", width: 60 }}>{e.appts || 0}</td>
+                    <td style={{ padding: cellPad, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={nameOf(e.userId) || ""}>{nameOf(e.userId) || "—"}</td>
+                    <td style={{ padding: cellPad, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={repOf(e)}>{repOf(e)}</td>
                   </tr>
                   {isOpen && (
                     <tr style={{ borderBottom: `1px solid ${LINE_C}`, background: "#F8FAFC" }}>
@@ -3585,17 +3586,23 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
   };
 
   const cols = [
-    ["name", "Name"], ["title", "Title"], ["company", "Company"],
-    ["phone", "Work phone"], ["cell", "Cell phone"], ["email", "Email"],
+    ["name", "Name"], ["company", "Company"],
+    ["phone", "Work phone"], ["email", "Email"],
   ];
-  if (seesAll) cols.push(["owner", "Created by"]);
+
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (id) => setOpen((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const kvLabel = { fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6" };
+  const kvValue = { fontSize: 13.5 };
+  const cellPad = "11px 14px";
+  const trunc = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
     <>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Contacts</h1>
         <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
-          {seesAll ? "Every contact across all companies." : "Contacts you've added."} Click a column to sort, or export to Excel.
+          {seesAll ? "Every contact across all companies." : "Contacts you've added."} Click a row to see full details, or export to Excel.
         </p>
       </div>
 
@@ -3618,36 +3625,56 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
           <Empty msg={q ? `No contacts match "${q}".` : "No contacts yet. They're added automatically when you log activity with a contact name."} />
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
               <thead>
                 <tr style={{ background: "#F1F5F9" }}>
+                  <th style={{ width: 34, borderBottom: `1px solid ${LINE_C}` }} />
                   {cols.map(([k, label]) => (
                     <th key={k} onClick={() => setSort(k)}
-                      style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer" }}>
+                      style={{ textAlign: "left", padding: "10px 12px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer", borderBottom: `1px solid ${LINE_C}`,
+                        ...(k === "phone" ? { width: 150 } : {}) }}>
                       {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
                     </th>
                   ))}
-                  <th style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B" }}>Notes</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((c) => (
-                  <tr key={c.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>{c.name || "—"}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.title || "—"}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                      {c.companyName ? (
-                        <button onClick={() => onOpenCompany(c.companyId)} className="tap"
-                          style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{c.companyName}</button>
-                      ) : "—"}
-                    </td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.phone || "—"}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.cellPhone || "—"}</td>
-                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.email || "—"}</td>
-                    {seesAll && <td style={{ padding: "10px 14px", whiteSpace: "nowrap", opacity: 0.7 }}>{nameOf(c.createdBy) || "—"}</td>}
-                    <td style={{ padding: "10px 14px", maxWidth: 280, opacity: 0.75 }}>{c.notes || "—"}</td>
-                  </tr>
-                ))}
+                {rows.map((c) => {
+                  const isOpen = open.has(c.id);
+                  return (
+                    <React.Fragment key={c.id}>
+                      <tr onClick={() => toggle(c.id)} className="tap"
+                        style={{ borderBottom: isOpen ? "none" : `1px solid ${LINE_C}`, cursor: "pointer", background: isOpen ? "#F8FAFC" : "transparent" }}>
+                        <td style={{ padding: cellPad, textAlign: "center" }}>
+                          <ChevronRight size={15} style={{ opacity: 0.5, transition: "transform .15s ease", transform: isOpen ? "rotate(90deg)" : "none" }} />
+                        </td>
+                        <td style={{ padding: cellPad, fontWeight: 600, ...trunc }} title={c.name || ""}>{c.name || "—"}</td>
+                        <td style={{ padding: cellPad, ...trunc }} title={c.companyName || ""}>
+                          {c.companyName ? (
+                            <button onClick={(ev) => { ev.stopPropagation(); onOpenCompany(c.companyId); }} className="tap"
+                              style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, maxWidth: "100%", display: "block", textAlign: "left", ...trunc }}>{c.companyName}</button>
+                          ) : "—"}
+                        </td>
+                        <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{c.phone || "—"}</td>
+                        <td style={{ padding: cellPad, ...trunc }} title={c.email || ""}>{c.email || "—"}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr style={{ borderBottom: `1px solid ${LINE_C}`, background: "#F8FAFC" }}>
+                          <td colSpan={cols.length + 1} style={{ padding: 0 }}>
+                            <div style={{ padding: "6px 22px 18px 48px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px 28px" }}>
+                              <div><div style={kvLabel}>Title</div><div style={kvValue}>{c.title || "—"}</div></div>
+                              <div><div style={kvLabel}>Cell phone</div><div style={kvValue}>{c.cellPhone || "—"}</div></div>
+                              <div><div style={kvLabel}>Work phone</div><div style={kvValue}>{c.phone || "—"}</div></div>
+                              <div><div style={kvLabel}>Email</div><div style={kvValue}>{c.email || "—"}</div></div>
+                              {seesAll && <div><div style={kvLabel}>Created by</div><div style={kvValue}>{nameOf(c.createdBy) || "—"}</div></div>}
+                              <div style={{ gridColumn: "1 / -1" }}><div style={kvLabel}>Notes</div><div style={kvValue}>{c.notes || "—"}</div></div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
