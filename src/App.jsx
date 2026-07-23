@@ -3191,35 +3191,20 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 
   const shown = ownerFilter === "all" ? deals : deals.filter((d) => d.ownerId === ownerFilter);
 
-  // When a deal first reaches "Appointment Set", credit one appointment to the owner's
-  // activity (once per deal). Returns extra fields to persist on the deal.
-  const maybeCreditAppt = async (deal, prevStage) => {
-    if (deal.stage === "appointment" && !deal.apptCredited && prevStage !== "appointment") {
-      await api.addEntry({
-        userId: deal.ownerId, date: TODAY(),
-        calls: 0, emails: 0, appts: 1,
-        notes: `Auto: appointment set — ${deal.company}`, fromDeal: deal.id || null,
-      });
-      return true;
-    }
-    return deal.apptCredited || false;
-  };
+  // NOTE: Appointments are counted from what reps actually log on the Add Activity
+  // form. We deliberately do NOT auto-create an activity when a deal reaches the
+  // "Appointment Set" stage — doing so double-counted every logged appointment.
 
   const upsertDeal = (data) => saveDeals(async () => {
     if (data.id) {
       const prev = allDeals.find((d) => d.id === data.id);
       const stageChanged = prev && data.stage && data.stage !== prev.stage;
       const merged = { ...prev, ...data, ...(stageChanged ? { stageChangedAt: new Date().toISOString() } : {}) };
-      // Save the deal first so we have an id, then handle credit + credited flag.
       const saved = await api.upsertDeal(merged);
-      const credited = await maybeCreditAppt(saved, prev?.stage);
-      if (credited && !saved.apptCredited) await api.updateDeal(saved.id, { apptCredited: true });
       // Best-effort history log — never let it block the save.
       if (stageChanged) { try { await api.logStageChange(saved.id, prev.stage, saved.stage); } catch { /* ignore */ } }
     } else {
       const created = await api.upsertDeal({ ...data, ownerId: data.ownerId || liveUser.id, stageChangedAt: new Date().toISOString() });
-      const credited = await maybeCreditAppt(created, null);
-      if (credited) await api.updateDeal(created.id, { apptCredited: true });
       try { await api.logStageChange(created.id, null, created.stage); } catch { /* ignore */ }
     }
   }).then(() => setModal(null));
@@ -3228,9 +3213,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
     const prev = allDeals.find((d) => d.id === dealId);
     if (!prev || prev.stage === newStage) return;
     return saveDeals(async () => {
-      const saved = await api.updateDeal(dealId, { ...prev, stage: newStage, stageChangedAt: new Date().toISOString() });
-      const credited = await maybeCreditAppt(saved, prev.stage);
-      if (credited && !saved.apptCredited) await api.updateDeal(dealId, { apptCredited: true });
+      await api.updateDeal(dealId, { ...prev, stage: newStage, stageChangedAt: new Date().toISOString() });
       try { await api.logStageChange(dealId, prev.stage, newStage); } catch { /* ignore */ }
     });
   };
@@ -3487,11 +3470,6 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
             <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
           </div>
         </Field>
-        {f.stage === "appointment" && !deal?.apptCredited && (
-          <div style={{ background: CYAN + "14", color: "#0B6A8C", borderRadius: 8, padding: "9px 12px", fontSize: 12.5, marginBottom: 12 }}>
-            Setting this to "Appointment Set" will credit 1 appointment to the owner's activity stats.
-          </div>
-        )}
         {f.stage === "lost" && (
           <Field label="Reason for loss">
             <div style={{ position: "relative" }}>
