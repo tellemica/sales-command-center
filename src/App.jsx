@@ -431,6 +431,7 @@ export default function App() {
   const nav = [["dashboard", "Dashboard", BarChart3]];
   if (canLog) nav.push(["log", "Log Activity", Plus]);
   nav.push(["companies", "Companies", Building2]);
+  nav.push(["contacts", "Contacts", Users]);
   nav.push(["leads", "Leads", UserCheck]);
   nav.push(["activity", "Activity Log", Table2]);
   nav.push(["pipeline", "Pipeline", Briefcase]);
@@ -612,6 +613,9 @@ export default function App() {
               onOpen={openCompanyById}
             />
           )
+        )}
+        {view === "contacts" && (
+          <ContactsView effectiveUser={effectiveUser} users={users} onOpenCompany={openCompanyById} />
         )}
         {view === "leads" && (
           <LeadsView
@@ -1393,7 +1397,7 @@ function ContactsSection({ companyId, contacts, reload, users, effectiveUser }) 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{c.name}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : null}</div>
-                  <div style={{ fontSize: 12.5, opacity: 0.65 }}>{[c.email, c.phone].filter(Boolean).join(" · ") || "No contact details"}</div>
+                  <div style={{ fontSize: 12.5, opacity: 0.65 }}>{[c.email, c.phone, c.cellPhone && `${c.cellPhone} (cell)`].filter(Boolean).join(" · ") || "No contact details"}</div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
                   <button onClick={() => toggleNotes(c.id)} className="tap" style={{ ...iconBtn, color: openNotes.has(c.id) ? EMAIL : INK }} title="Notes / history"><FileSpreadsheet size={14} /></button>
@@ -1415,7 +1419,7 @@ function ContactsSection({ companyId, contacts, reload, users, effectiveUser }) 
   );
 }
 function ContactModal({ contact, onSave, onClose }) {
-  const [f, setF] = useState(contact || { name: "", title: "", phone: "", email: "", notes: "" });
+  const [f, setF] = useState(contact || { name: "", title: "", phone: "", cellPhone: "", email: "", notes: "" });
   const [err, setErr] = useState("");
   const submit = () => { if (!f.name.trim()) { setErr("Name is required."); return; } onSave(contact ? { ...f, id: contact.id } : f); };
   return (
@@ -1429,8 +1433,9 @@ function ContactModal({ contact, onSave, onClose }) {
         <Field label="Title"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
+          <Field label="Work phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
         </div>
+        <Field label="Cell phone"><input value={f.cellPhone || ""} onChange={(e) => setF({ ...f, cellPhone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap" style={{ width: "100%", background: INK, color: PAPER, border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Save contact</button>
       </div>
@@ -3521,6 +3526,136 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
   );
 }
 
+
+// All contacts across companies. Reps/BDRs see the ones they created (plus any
+// with no recorded creator); managers and admins see everything.
+function ContactsView({ effectiveUser, users, onOpenCompany }) {
+  const [contacts, setContacts] = useState(null);
+  const [q, setQ] = useState("");
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState("asc");
+
+  const seesAll = effectiveUser.role === "admin" || effectiveUser.role === "management";
+  const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
+
+  useEffect(() => {
+    let alive = true;
+    api.listAllContacts()
+      .then((all) => { if (alive) setContacts(all); })
+      .catch(() => { if (alive) setContacts([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const scoped = (contacts || []).filter((c) =>
+    seesAll || !c.createdBy || c.createdBy === effectiveUser.id
+  );
+
+  const filtered = scoped.filter((c) => {
+    const s = q.trim().toLowerCase();
+    if (!s) return true;
+    return [c.name, c.title, c.companyName, c.phone, c.cellPhone, c.email, c.notes]
+      .some((v) => (v || "").toLowerCase().includes(s));
+  });
+
+  const rows = [...filtered].sort((a, b) => {
+    const pick = (c) => ({
+      name: c.name, title: c.title, company: c.companyName,
+      phone: c.phone, cell: c.cellPhone, email: c.email, owner: nameOf(c.createdBy),
+    }[sortKey] || "");
+    const av = pick(a).toLowerCase(), bv = pick(b).toLowerCase();
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const setSort = (k) => { if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc")); else { setSortKey(k); setSortDir("asc"); } };
+
+  const exportXlsx = () => {
+    const data = rows.map((c) => ({
+      Name: c.name || "", Title: c.title || "", Company: c.companyName || "",
+      "Work Phone": c.phone || "", "Cell Phone": c.cellPhone || "",
+      Email: c.email || "", Notes: c.notes || "",
+      ...(seesAll ? { "Created by": nameOf(c.createdBy) || "—" } : {}),
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 22 }, { wch: 20 }, { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 26 }, { wch: 40 }, { wch: 18 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Contacts");
+    XLSX.writeFile(wb, `tellemica-contacts-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const cols = [
+    ["name", "Name"], ["title", "Title"], ["company", "Company"],
+    ["phone", "Work phone"], ["cell", "Cell phone"], ["email", "Email"],
+  ];
+  if (seesAll) cols.push(["owner", "Created by"]);
+
+  return (
+    <>
+      <div style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Contacts</h1>
+        <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
+          {seesAll ? "Every contact across all companies." : "Contacts you've added."} Click a column to sort, or export to Excel.
+        </p>
+      </div>
+
+      <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 18px", borderBottom: `1px solid ${LINE_C}`, flexWrap: "wrap" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, company, phone, email…"
+            style={{ ...inputStyle, marginBottom: 0, maxWidth: 340, background: "#F8FAFC" }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 12.5, opacity: 0.5 }}>{rows.length} {rows.length === 1 ? "contact" : "contacts"}</span>
+            <button onClick={exportXlsx} disabled={rows.length === 0} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: rows.length ? INK : LINE_C, color: rows.length ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: rows.length ? "pointer" : "default" }}>
+              <Download size={15} /> Export to Excel
+            </button>
+          </div>
+        </div>
+
+        {contacts === null ? (
+          <div style={{ padding: 30, textAlign: "center", opacity: 0.45, fontSize: 14 }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <Empty msg={q ? `No contacts match "${q}".` : "No contacts yet. They're added automatically when you log activity with a contact name."} />
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  {cols.map(([k, label]) => (
+                    <th key={k} onClick={() => setSort(k)}
+                      style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", cursor: "pointer" }}>
+                      {label}{sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                  ))}
+                  <th style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B" }}>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => (
+                  <tr key={c.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                    <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>{c.name || "—"}</td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.title || "—"}</td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                      {c.companyName ? (
+                        <button onClick={() => onOpenCompany(c.companyId)} className="tap"
+                          style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{c.companyName}</button>
+                      ) : "—"}
+                    </td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.phone || "—"}</td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.cellPhone || "—"}</td>
+                    <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{c.email || "—"}</td>
+                    {seesAll && <td style={{ padding: "10px 14px", whiteSpace: "nowrap", opacity: 0.7 }}>{nameOf(c.createdBy) || "—"}</td>}
+                    <td style={{ padding: "10px 14px", maxWidth: 280, opacity: 0.75 }}>{c.notes || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
 
 function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals }) {
   const [modal, setModal] = useState(null);
