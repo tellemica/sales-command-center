@@ -160,6 +160,28 @@ async function syncContactFromEntry(entry) {
   }
 }
 
+// Fill in a company's BAN / FAN / phone from an activity when the company record
+// doesn't have them yet. Never overwrites a value already on the company — so an
+// admin's deliberate edit wins. Best-effort: never blocks the activity save.
+async function syncCompanyDetailsFromEntry(entry) {
+  try {
+    const companyId = entry.companyId;
+    if (!companyId) return;
+    const { data: co } = await supabase
+      .from("companies").select("ban, fan, phone").eq("id", companyId).single();
+    if (!co) return;
+    const patch = {};
+    if (!(co.ban || "").trim() && (entry.ban || "").trim()) patch.ban = entry.ban.trim();
+    if (!(co.fan || "").trim() && (entry.fan || "").trim()) patch.fan = entry.fan.trim();
+    if (!(co.phone || "").trim() && (entry.phone || "").trim()) patch.phone = entry.phone.trim();
+    if (Object.keys(patch).length) {
+      await supabase.from("companies").update(patch).eq("id", companyId);
+    }
+  } catch {
+    /* ignore — activity is already saved */
+  }
+}
+
 export async function addEntry(entry) {
   // Tie the activity to a company record (create one if this name is new).
   if (entry.company && !entry.companyId) {
@@ -169,6 +191,7 @@ export async function addEntry(entry) {
   if (error) throw error;
   const saved = toCamelEntry(data);
   await syncContactFromEntry(saved); // auto-add the contact to the company roster
+  await syncCompanyDetailsFromEntry(saved); // fill in company BAN/FAN/phone if blank
   return saved;
 }
 
