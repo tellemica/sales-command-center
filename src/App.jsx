@@ -3659,8 +3659,21 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
           const selStyle = { ...inputStyle, marginBottom: 0, appearance: "none", cursor: "pointer", fontSize: 13 };
           return (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Deal value builder</div>
-              {lines.length === 0 && <div style={{ fontSize: 12.5, opacity: 0.5, marginBottom: 8 }}>Add line items to calculate the deal value, or enter a value manually below.</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 9, background: EMAIL + "12", border: `1px solid ${EMAIL}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 10 }}>
+                <span style={{ width: 30, height: 30, borderRadius: 8, background: EMAIL + "22", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                  <TrendingUp size={16} color={EMAIL} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0B4A6F" }}>Deal Value Builder</div>
+                  <div style={{ fontSize: 12, opacity: 0.6 }}>Add line items to calculate the deal value automatically.</div>
+                </div>
+              </div>
+              {lines.length === 0 && (
+                <button type="button" onClick={addLine} className="tap"
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: EMAIL, color: "#fff", border: "none", borderRadius: 10, padding: "12px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer", width: "100%", marginBottom: 6 }}>
+                  <Plus size={16} /> Build the deal value
+                </button>
+              )}
               {lines.map((l, i) => {
                 const cats = COMMISSION_CATEGORIES.filter((c) => VENDOR_RATES[l.vendor]?.[c.id]); // hide categories the vendor doesn't pay
                 const rate = VENDOR_RATES[l.vendor]?.[l.category];
@@ -3708,12 +3721,14 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
               </button>
               {lines.length > 0 && (
                 <div style={{ background: INK, borderRadius: 10, padding: "12px 14px", marginBottom: 12, color: PAPER }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12.5, opacity: 0.7 }}>Total company commission</span>
-                    <span style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(total)}</span>
-                  </div>
+                  {isAdminMgr && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 12.5, opacity: 0.7 }}>Total company commission</span>
+                      <span style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(total)}</span>
+                    </div>
+                  )}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Rep estimated value (20%)</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Estimated deal value</span>
                     <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600 }}>{fmtMoney(repVal)}</span>
                   </div>
                 </div>
@@ -3722,7 +3737,10 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
           );
         })()}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Deal value ($)"><input type="number" min="0" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} style={inputStyle} placeholder="0" /></Field>
+          <Field label="Deal value ($)">
+            <input type="number" value={f.value || 0} readOnly title="Set by the Deal Value Builder above"
+              style={{ ...inputStyle, background: "#EEF1F4", cursor: "not-allowed", color: "#334155", fontWeight: 600 }} />
+          </Field>
           <Field label="Expected close"><input type="date" value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} style={inputStyle} /></Field>
         </div>
         <Field label="Next action / follow-up date"><input type="date" value={f.nextActionDate || ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={inputStyle} /></Field>
