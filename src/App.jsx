@@ -80,7 +80,6 @@ const inMonth = (dateStr, mk) => (dateStr || "").slice(0, 7) === mk;
 // used for the weighted forecast. Closed Won/Lost are terminal.
 const STAGES = [
   { id: "new", label: "New", color: "#64748B", prob: 10 },
-  { id: "contacted", label: "Contacted", color: "#2563A8", prob: 25 },
   { id: "appointment", label: "Appointment Set", color: "#00A9E0", prob: 50 },
   { id: "proposal", label: "Proposal", color: "#0B7285", prob: 75 },
   { id: "won", label: "Closed Won", color: "#16A34A", prob: 100 },
@@ -107,7 +106,7 @@ const followUpState = (dateStr) => {
   return { label: `Due ${new Date(dateStr + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, color: "#5A6B7B", due: false };
 };
 // Stale = open deal untouched (by created date proxy) longer than the stage threshold.
-const STAGE_STALE_DAYS = { new: 14, contacted: 21, appointment: 30, proposal: 30 };
+const STAGE_STALE_DAYS = { new: 14, appointment: 30, proposal: 30 };
 const dealAge = (deal) => {
   if (deal.stage === "won" || deal.stage === "lost") return null;
   // Prefer time in current stage; fall back to creation date for legacy deals.
