@@ -3276,6 +3276,14 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
   const role = liveUser.role;
   const canEdit = role === "bdr" || role === "sales" || role === "admin" || role === "management"; // reps own deals; admins/managers can also manage
   const [mode, setMode] = useState("board"); // board | table
+  // Detect a phone-sized viewport so we can stack the board vertically there.
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 720);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 720);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const [openStages, setOpenStages] = useState(() => new Set(["new", "appointment", "proposal"])); // which stacked sections are expanded on mobile
   const [modal, setModal] = useState(null); // {deal} or {deal:null}
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [sortKey, setSortKey] = useState("value");
@@ -3329,7 +3337,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 
   return (
     <>
-      <style>{`@media (max-width: 720px){ .board{grid-auto-columns:80% !important} }`}</style>
+      <style>{``}</style>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Sales Pipeline</h1>
@@ -3366,60 +3374,111 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
           <Empty msg={canEdit ? "Click 'New deal' to add your first opportunity." : "No deals in your scope yet."} />
         </Panel>
       ) : mode === "board" ? (
-        <div className="board" style={{ display: "grid", gridAutoFlow: "column", gridAutoColumns: "minmax(230px, 1fr)", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
-          {STAGES.map((s) => {
-            const col = shown.filter((d) => d.stage === s.id);
-            const colVal = col.reduce((sum, d) => sum + (d.value || 0), 0);
-            return (
-              <div key={s.id}
-                onDragOver={(e) => { if (canEdit) e.preventDefault(); }}
-                onDrop={() => { if (canEdit && dragId) { moveDeal(dragId, s.id); setDragId(null); } }}
-                style={{ background: "rgba(255,255,255,.5)", border: `1px solid ${LINE_C}`, borderRadius: 12, padding: 10, minHeight: 120 }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingBottom: 8, borderBottom: `2px solid ${s.color}` }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.color }} />{s.label}
-                  </span>
-                  <span style={{ fontSize: 11, opacity: 0.55 }}>{col.length}</span>
+        (() => {
+          // Shared deal-card renderer for both desktop columns and mobile stacks.
+          const DealCard = ({ d, s }) => (
+            <div key={d.id} draggable={canEdit && !isMobile}
+              onDragStart={() => setDragId(d.id)}
+              onClick={() => canEdit && setModal({ deal: d })}
+              className="tap"
+              style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 11, cursor: canEdit ? (isMobile ? "pointer" : "grab") : "default" }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>{d.company}</div>
+              {d.contact && <div style={{ fontSize: 12, opacity: 0.55, marginBottom: 6 }}>{d.contact}</div>}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{fmtMoney(d.value)}</span>
+                {ownerFilter === "all" && repUsers.length > 1 && <span style={{ fontSize: 10.5, opacity: 0.5 }}>{ownerName(d.ownerId).split(" ")[0]}</span>}
+              </div>
+              {d.closeDate && <div style={{ fontSize: 11, opacity: 0.5, marginTop: 5 }}>Close: {new Date(d.closeDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>}
+              {(() => {
+                const fu = followUpState(d.nextActionDate);
+                const ag = dealAge(d);
+                return (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                    {fu && <span style={{ fontSize: 10.5, fontWeight: 600, color: fu.color, background: fu.color + "16", borderRadius: 5, padding: "2px 6px" }}>⏱ {fu.label}</span>}
+                    {ag && ag.stale && <span style={{ fontSize: 10.5, fontWeight: 600, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 5, padding: "2px 6px" }}>⚠ {ag.age}d in stage</span>}
+                  </div>
+                );
+              })()}
+              {d.stage === "appointment" && d.apptAt && (
+                <button onClick={(ev) => { ev.stopPropagation(); const rep = users.find((u) => u.id === d.ownerId); const mgr = users.find((u) => u.id === rep?.managerId); downloadAppointmentICS(d, rep, mgr); }} className="tap"
+                  style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 7, background: CYAN + "18", color: "#0B6A8C", border: "none", borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                  <CalendarCheck size={12} /> Add to calendar
+                </button>
+              )}
+              {isMobile && canEdit && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${LINE_C}`, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 10.5, opacity: 0.5 }}>Move to:</span>
+                  <select value={d.stage} onClick={(e) => e.stopPropagation()} onChange={(e) => { e.stopPropagation(); moveDeal(d.id, e.target.value); }}
+                    style={{ fontSize: 11.5, padding: "3px 6px", borderRadius: 6, border: `1px solid ${LINE_C}`, background: "#fff", cursor: "pointer" }}>
+                    {STAGES.map((st) => <option key={st.id} value={st.id}>{st.label}</option>)}
+                  </select>
                 </div>
-                <div style={{ fontSize: 11.5, opacity: 0.6, marginBottom: 8 }}>{fmtMoney(colVal)}</div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {col.map((d) => (
-                    <div key={d.id} draggable={canEdit}
-                      onDragStart={() => setDragId(d.id)}
-                      onClick={() => canEdit && setModal({ deal: d })}
-                      className="tap"
-                      style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 11, cursor: canEdit ? "grab" : "default" }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 3 }}>{d.company}</div>
-                      {d.contact && <div style={{ fontSize: 12, opacity: 0.55, marginBottom: 6 }}>{d.contact}</div>}
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{fmtMoney(d.value)}</span>
-                        {ownerFilter === "all" && repUsers.length > 1 && <span style={{ fontSize: 10.5, opacity: 0.5 }}>{ownerName(d.ownerId).split(" ")[0]}</span>}
-                      </div>
-                      {d.closeDate && <div style={{ fontSize: 11, opacity: 0.5, marginTop: 5 }}>Close: {new Date(d.closeDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>}
-                      {(() => {
-                        const fu = followUpState(d.nextActionDate);
-                        const ag = dealAge(d);
-                        return (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
-                            {fu && <span style={{ fontSize: 10.5, fontWeight: 600, color: fu.color, background: fu.color + "16", borderRadius: 5, padding: "2px 6px" }}>⏱ {fu.label}</span>}
-                            {ag && ag.stale && <span style={{ fontSize: 10.5, fontWeight: 600, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 5, padding: "2px 6px" }}>⚠ {ag.age}d in stage</span>}
-                          </div>
-                        );
-                      })()}
-                      {d.stage === "appointment" && d.apptAt && (
-                        <button onClick={(ev) => { ev.stopPropagation(); const rep = users.find((u) => u.id === d.ownerId); const mgr = users.find((u) => u.id === rep?.managerId); downloadAppointmentICS(d, rep, mgr); }} className="tap"
-                          style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 7, background: CYAN + "18", color: "#0B6A8C", border: "none", borderRadius: 6, padding: "4px 8px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-                          <CalendarCheck size={12} /> Add to calendar
-                        </button>
+              )}
+            </div>
+          );
+
+          // MOBILE: stacked, collapsible sections — scroll down, not sideways.
+          if (isMobile) {
+            return (
+              <div style={{ display: "grid", gap: 10 }}>
+                {STAGES.map((s) => {
+                  const col = shown.filter((d) => d.stage === s.id);
+                  const colVal = col.reduce((sum, d) => sum + (d.value || 0), 0);
+                  const isOpen = openStages.has(s.id);
+                  return (
+                    <div key={s.id} style={{ background: "rgba(255,255,255,.5)", border: `1px solid ${LINE_C}`, borderRadius: 12, overflow: "hidden" }}>
+                      <button onClick={() => setOpenStages((p) => { const n = new Set(p); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n; })}
+                        className="tap" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "transparent", border: "none", borderBottom: isOpen ? `2px solid ${s.color}` : "none", padding: "12px 14px", cursor: "pointer" }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 9, height: 9, borderRadius: "50%", background: s.color }} />{s.label}
+                          <span style={{ fontSize: 12, opacity: 0.5, fontWeight: 500 }}>({col.length})</span>
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 12, opacity: 0.6 }}>{fmtMoney(colVal)}</span>
+                          <ChevronRight size={16} style={{ opacity: 0.5, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s ease" }} />
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div style={{ display: "grid", gap: 8, padding: 10 }}>
+                          {col.length === 0 ? <div style={{ fontSize: 12.5, opacity: 0.35, textAlign: "center", padding: "10px 0" }}>No deals in this stage.</div>
+                            : col.map((d) => <DealCard key={d.id} d={d} s={s} />)}
+                        </div>
                       )}
                     </div>
-                  ))}
-                  {col.length === 0 && <div style={{ fontSize: 12, opacity: 0.3, textAlign: "center", padding: "12px 0" }}>—</div>}
-                </div>
+                  );
+                })}
               </div>
             );
-          })}
-        </div>
+          }
+
+          // DESKTOP: columns that flex to fit the screen (no forced min that overflows).
+          return (
+            <div className="board" style={{ display: "grid", gridTemplateColumns: `repeat(${STAGES.length}, minmax(0, 1fr))`, gap: 12, paddingBottom: 8 }}>
+              {STAGES.map((s) => {
+                const col = shown.filter((d) => d.stage === s.id);
+                const colVal = col.reduce((sum, d) => sum + (d.value || 0), 0);
+                return (
+                  <div key={s.id}
+                    onDragOver={(e) => { if (canEdit) e.preventDefault(); }}
+                    onDrop={() => { if (canEdit && dragId) { moveDeal(dragId, s.id); setDragId(null); } }}
+                    style={{ background: "rgba(255,255,255,.5)", border: `1px solid ${LINE_C}`, borderRadius: 12, padding: 10, minHeight: 120, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, paddingBottom: 8, borderBottom: `2px solid ${s.color}` }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, minWidth: 0, overflow: "hidden" }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: s.color, flexShrink: 0 }} /><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
+                      </span>
+                      <span style={{ fontSize: 11, opacity: 0.55, flexShrink: 0 }}>{col.length}</span>
+                    </div>
+                    <div style={{ fontSize: 11.5, opacity: 0.6, marginBottom: 8 }}>{fmtMoney(colVal)}</div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {col.map((d) => <DealCard key={d.id} d={d} s={s} />)}
+                      {col.length === 0 && <div style={{ fontSize: 12, opacity: 0.3, textAlign: "center", padding: "12px 0" }}>—</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
       ) : (
         <Panel title="" style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
