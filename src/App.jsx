@@ -3738,7 +3738,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         })()}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Deal value ($)">
-            <input type="number" value={f.value || 0} readOnly title="Set by the Deal Value Builder above"
+            <input type="text" value={fmtMoney(f.value || 0)} readOnly title="Set by the Deal Value Builder above"
               style={{ ...inputStyle, background: "#EEF1F4", cursor: "not-allowed", color: "#334155", fontWeight: 600 }} />
           </Field>
           <Field label="Expected close"><input type="date" value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} style={inputStyle} /></Field>
