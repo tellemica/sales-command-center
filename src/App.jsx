@@ -480,7 +480,7 @@ export default function App() {
   nav.push(["contacts", "Contacts", Users]);
   nav.push(["leads", "Leads", UserCheck]);
   nav.push(["activity", "Activity Log", Table2]);
-  nav.push(["pipeline", "Pipeline", Briefcase]);
+  nav.push(["pipeline", "Opportunities", Briefcase]);
   nav.push(["followups", "Follow-ups", Clock]);
   if (role !== "bdr") nav.push(["reports", "Reports", TrendingUp]);
   if (canManageGoals) nav.push(["goals", "Goals", Target]);
@@ -1150,7 +1150,7 @@ function CompaniesList({ companies, entries, deals, onOpen }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 760 }}>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
-                {["Company", "Activities", "Calls", "Emails", "Appts", "Deals", "Pipeline", "Last activity"].map((h) => (
+                {["Company", "Activities", "Calls", "Emails", "Appts", "Deals", "Opportunities", "Last activity"].map((h) => (
                   <th key={h} style={{ textAlign: h === "Company" ? "left" : "center", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -1251,7 +1251,7 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
           <MiniStat label="Calls" value={totals.calls} color={CALL} />
           <MiniStat label="Emails" value={totals.emails} color={EMAIL} />
           <MiniStat label="Appts" value={totals.appts} color={APPT} />
-          <MiniStat label="Pipeline" value={pipeline ? "$" + pipeline.toLocaleString() : "$0"} color={INK} />
+          <MiniStat label="Opportunities" value={pipeline ? "$" + pipeline.toLocaleString() : "$0"} color={INK} />
         </div>
       </div>
 
@@ -2011,7 +2011,7 @@ function FollowUpsView({ deals, leads, users, liveUser, setView }) {
           <Clock size={30} color="#B7C2CE" style={{ marginBottom: 10 }} />
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Nothing scheduled</div>
           <p style={{ fontSize: 13.5, opacity: 0.6, margin: "0 0 16px" }}>Add a "next action" date to a deal or lead and it'll show up here.</p>
-          <button onClick={() => setView("pipeline")} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Go to Pipeline</button>
+          <button onClick={() => setView("pipeline")} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>Go to Opportunities</button>
         </div>
       ) : (
         <>
@@ -2281,10 +2281,10 @@ function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, 
       {/* Pipeline snapshot */}
       <div style={{ marginTop: 22, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
         <Briefcase size={17} color={INK} />
-        <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 }}>Sales Pipeline</h2>
+        <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 }}>Opportunities snapshot</h2>
       </div>
       <div className="grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 16 }}>
-        <StatCard icon={Briefcase} color={EMAIL} label="Open Pipeline" value={fmtMoney(pipelineValue)} sub={`${openDeals.length} open deals`} raw />
+        <StatCard icon={Briefcase} color={EMAIL} label="Open Opportunities" value={fmtMoney(pipelineValue)} sub={`${openDeals.length} open deals`} raw />
         <StatCard icon={TrendingUp} color={CYAN} label="Weighted Forecast" value={fmtMoney(Math.round(weightedValue))} sub="by stage probability" raw />
         <StatCard icon={DollarSign} color="#16A34A" label="Closed Won" value={fmtMoney(wonValue)} sub={`${wonDeals.length} won deals`} raw />
         <StatCard icon={Percent} color={APPT} label="Win Rate" value={`${winRate}%`} sub={`${closedCount} closed total`} raw />
@@ -2316,7 +2316,7 @@ function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, 
       })()}
       <Panel title="Deals by stage">
         {openDeals.length + wonDeals.length + lostDeals.length === 0 ? (
-          <Empty msg="No deals yet. Reps can add opportunities from the Pipeline tab." />
+          <Empty msg="No deals yet. Reps can add opportunities from the Opportunities tab." />
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {STAGES.map((s) => {
@@ -3387,7 +3387,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
       <style>{``}</style>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Sales Pipeline</h1>
+          <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Opportunities</h1>
           <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
             {role === "bdr" ? "Your deals" : role === "sales" ? "You + your BDRs" : "All deals"} · {shown.length} in view
           </p>
