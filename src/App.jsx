@@ -3611,7 +3611,14 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
     const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
     // Clear the lost reason if the deal isn't actually lost.
     const lostReason = f.stage === "lost" ? String(f.lostReason || "").trim() : "";
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, commissionLines: f.commissionLines || [], taggedRepId, lostReason, ...(deal?.id ? { id: deal.id } : {}) });
+    setErr("");
+    Promise.resolve(
+      onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, commissionLines: f.commissionLines || [], taggedRepId, lostReason, ...(deal?.id ? { id: deal.id } : {}) })
+    ).catch((e) => {
+      const msg = String(e?.message || e || "");
+      if (/commission_lines/.test(msg)) setErr("The commission_lines column is missing — run commission-lines-migration.sql in Supabase, then try again.");
+      else setErr("Couldn't save: " + (msg || "unknown error") + ". Try again or use the thumbs-down to report it.");
+    });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
