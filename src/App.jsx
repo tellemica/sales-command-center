@@ -86,6 +86,53 @@ const STAGES = [
   { id: "lost", label: "Closed Lost", color: "#B4453F", prob: 0 },
 ];
 const STAGE = Object.fromEntries(STAGES.map((s) => [s.id, s]));
+
+// ---- Commission / deal-value engine ----
+// Each vendor pays per category either as a flat amount per line, or as a
+// multiple of the plan's MRC. `null` for a category means the vendor doesn't
+// compensate it (hidden on the form).
+const VENDORS = [
+  { id: "att", label: "AT&T" },
+  { id: "vzw", label: "Verizon" },
+  { id: "tmo", label: "T-Mobile" },
+];
+const COMMISSION_CATEGORIES = [
+  { id: "new", label: "New lines" },
+  { id: "upgrade", label: "Upgrades" },
+  { id: "fixed", label: "Fixed Wireless" },
+];
+// type "mrc" → payout = count * mrc * factor ; type "flat" → payout = count * amount
+const VENDOR_RATES = {
+  att: {
+    new:     { type: "mrc", factor: 2.76 },
+    upgrade: { type: "mrc", factor: 1.4 },
+    fixed:   { type: "mrc", factor: 4 },
+  },
+  vzw: {
+    new:     { type: "flat", amount: 130 },
+    upgrade: { type: "flat", amount: 130 },
+    fixed:   { type: "flat", amount: 130 }, // placeholder — confirm exact amount
+  },
+  tmo: {
+    new:     { type: "mrc", factor: 4 },
+    upgrade: null, // T-Mobile does not comp upgrades
+    fixed:   { type: "mrc", factor: 4 },
+  },
+};
+const REP_COMMISSION_PCT = 0.20; // BDRs and Sales Reps receive 20% of the total
+
+// Payout for a single line item (total company commission for that line).
+const lineCommission = (line) => {
+  const rate = VENDOR_RATES[line.vendor]?.[line.category];
+  if (!rate) return 0;
+  const count = Number(line.count) || 0;
+  if (rate.type === "flat") return count * rate.amount;
+  return count * (Number(line.mrc) || 0) * rate.factor;
+};
+// Total company commission across all line items.
+const dealCommissionTotal = (lines) => (lines || []).reduce((sum, l) => sum + lineCommission(l), 0);
+// What the rep/BDR earns (this is what the "deal value" box shows).
+const dealRepValue = (lines) => dealCommissionTotal(lines) * REP_COMMISSION_PCT;
 const OPEN_STAGES = STAGES.filter((s) => s.id !== "won" && s.id !== "lost");
 // Reasons captured when a deal is marked Closed Lost — drives win/loss reporting.
 const LOST_REASONS = ["Price / budget", "Went with competitor", "Timing / no decision", "No response / went dark", "Not a fit", "Other"];
@@ -3544,7 +3591,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
 function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assignableOwners, dealUsers }) {
   const isBDR = liveUser && liveUser.role === "bdr";
   const isAdminMgr = liveUser && (liveUser.role === "admin" || liveUser.role === "management");
-  const [f, setF] = useState({ company: "", contact: "", contactEmail: "", value: "", stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self", ...(deal || {}) });
+  const [f, setF] = useState({ company: "", contact: "", contactEmail: "", value: "", commissionLines: [], stage: "new", closeDate: "", notes: "", lostReason: "", nextActionDate: "", ownerId: "", taggedRepId: isBDR ? "" : "self", ...(deal || {}) });
   const [err, setErr] = useState("");
   const owners = assignableOwners || [];
   const [history, setHistory] = useState(null);
@@ -3564,7 +3611,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
     const taggedRepId = f.taggedRepId && f.taggedRepId !== "self" ? f.taggedRepId : null;
     // Clear the lost reason if the deal isn't actually lost.
     const lostReason = f.stage === "lost" ? String(f.lostReason || "").trim() : "";
-    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, taggedRepId, lostReason, ...(deal?.id ? { id: deal.id } : {}) });
+    onSave({ ...f, company: f.company.trim(), contact: f.contact.trim(), contactEmail: (f.contactEmail || "").trim(), value: +f.value || 0, commissionLines: f.commissionLines || [], taggedRepId, lostReason, ...(deal?.id ? { id: deal.id } : {}) });
   };
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 50 }}>
@@ -3601,6 +3648,79 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         )}
         <Field label="Contact (optional)"><input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} style={inputStyle} placeholder="Name, title, phone/email" /></Field>
         <Field label="Contact email (for calendar invites)"><input type="email" value={f.contactEmail || ""} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} style={inputStyle} placeholder="contact@company.com" /></Field>
+        {(() => {
+          const lines = f.commissionLines || [];
+          const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next) * 100) / 100 }));
+          const addLine = () => setLines([...lines, { vendor: "att", category: "new", count: "", mrc: "" }]);
+          const updateLine = (i, patch) => setLines(lines.map((l, j) => j === i ? { ...l, ...patch } : l));
+          const removeLine = (i) => setLines(lines.filter((_, j) => j !== i));
+          const total = dealCommissionTotal(lines);
+          const repVal = dealRepValue(lines);
+          const selStyle = { ...inputStyle, marginBottom: 0, appearance: "none", cursor: "pointer", fontSize: 13 };
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Deal value builder</div>
+              {lines.length === 0 && <div style={{ fontSize: 12.5, opacity: 0.5, marginBottom: 8 }}>Add line items to calculate the deal value, or enter a value manually below.</div>}
+              {lines.map((l, i) => {
+                const cats = COMMISSION_CATEGORIES.filter((c) => VENDOR_RATES[l.vendor]?.[c.id]); // hide categories the vendor doesn't pay
+                const rate = VENDOR_RATES[l.vendor]?.[l.category];
+                const isFlat = rate?.type === "flat";
+                // If the current category isn't valid for this vendor (e.g. T-Mobile upgrades), snap to the first valid one.
+                if (l.category && !VENDOR_RATES[l.vendor]?.[l.category] && cats[0]) { updateLine(i, { category: cats[0].id }); }
+                return (
+                  <div key={i} style={{ background: "#F8FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 10, marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#8494A6" }}>Line {i + 1}{lineCommission(l) > 0 ? ` · ${fmtMoney(lineCommission(l))} total` : ""}</span>
+                      <button type="button" onClick={() => removeLine(i)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, display: "flex" }}><X size={14} /></button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                      <div style={{ position: "relative" }}>
+                        <select value={l.vendor} onChange={(e) => updateLine(i, { vendor: e.target.value })} style={selStyle}>
+                          {VENDORS.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                      <div style={{ position: "relative" }}>
+                        <select value={l.category} onChange={(e) => updateLine(i, { category: e.target.value })} style={selStyle}>
+                          {cats.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 9, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 10.5, fontWeight: 600, color: "#8494A6", display: "block", marginBottom: 3 }}>Count</label>
+                        <input type="number" min="0" value={l.count} onChange={(e) => updateLine(i, { count: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10.5, fontWeight: 600, color: isFlat ? "#B8C2CC" : "#8494A6", display: "block", marginBottom: 3 }}>MRC {isFlat ? "(n/a)" : "($/line)"}</label>
+                        <input type="number" min="0" value={isFlat ? "" : l.mrc} disabled={isFlat} onChange={(e) => updateLine(i, { mrc: e.target.value })}
+                          style={{ ...inputStyle, marginBottom: 0, background: isFlat ? "#EEF1F4" : "#fff", cursor: isFlat ? "not-allowed" : "text" }}
+                          placeholder={isFlat ? `$${rate.amount}/line flat` : "0"} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <button type="button" onClick={addLine} className="tap"
+                style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px dashed ${LINE_C}`, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 600, color: EMAIL, cursor: "pointer", width: "100%", justifyContent: "center", marginBottom: 12 }}>
+                <Plus size={13} /> Add line item
+              </button>
+              {lines.length > 0 && (
+                <div style={{ background: INK, borderRadius: 10, padding: "12px 14px", marginBottom: 12, color: PAPER }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12.5, opacity: 0.7 }}>Total company commission</span>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(total)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Rep estimated value (20%)</span>
+                    <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600 }}>{fmtMoney(repVal)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Deal value ($)"><input type="number" min="0" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} style={inputStyle} placeholder="0" /></Field>
           <Field label="Expected close"><input type="date" value={f.closeDate} onChange={(e) => setF({ ...f, closeDate: e.target.value })} style={inputStyle} /></Field>
