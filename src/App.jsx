@@ -3073,7 +3073,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       try {
         const companyId = await api.findOrCreateCompany(form.company.trim());
         for (const c of validExtra) {
-          await api.saveContact(companyId, { name: c.name.trim() || c.email.trim(), phone: c.phone.trim(), email: c.email.trim() });
+          await api.saveContact(companyId, { name: c.name.trim() || c.email.trim(), phone: c.phone.trim(), phoneExt: (c.phoneExt || "").trim(), email: c.email.trim() });
         }
       } catch (e) { /* best-effort; activity already saved */ }
     }
@@ -3165,13 +3165,14 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
                 <button type="button" onClick={() => setExtraContacts((arr) => arr.filter((_, j) => j !== i))} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, display: "flex" }}><X size={14} /></button>
               </div>
               <input value={c.name} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} style={{ ...inputStyle, marginBottom: 8 }} placeholder="Name / title" />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input value={c.phone} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, phone: formatPhone(e.target.value) } : x))} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Phone" />
-                <input value={c.email} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, email: e.target.value } : x))} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Email" />
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <input value={c.phone} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, phone: formatPhone(e.target.value) } : x))} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 0 }} placeholder="Phone" />
+                <input value={c.phoneExt || ""} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, phoneExt: formatExt(e.target.value) } : x))} style={{ ...inputStyle, marginBottom: 0, width: 80, flexShrink: 0 }} placeholder="Ext" title="Extension" />
               </div>
+              <input value={c.email} onChange={(e) => setExtraContacts((arr) => arr.map((x, j) => j === i ? { ...x, email: e.target.value } : x))} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Email" />
             </div>
           ))}
-          <button type="button" onClick={() => setExtraContacts((arr) => [...arr, { name: "", phone: "", email: "" }])} className="tap"
+          <button type="button" onClick={() => setExtraContacts((arr) => [...arr, { name: "", phone: "", phoneExt: "", email: "" }])} className="tap"
             style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: `1px dashed ${LINE_C}`, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, fontWeight: 600, color: EMAIL, cursor: "pointer", width: "100%", justifyContent: "center" }}>
             <Plus size={13} /> Add another contact
           </button>
