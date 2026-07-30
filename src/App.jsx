@@ -40,6 +40,8 @@ const formatPhone = (val) => {
   if (d.length < 7) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 };
+// Extension: keep digits only, cap at 6 (covers any real extension).
+const formatExt = (val) => (val || "").replace(/\D/g, "").slice(0, 6);
 // MM-DD-YYYY for the bulk-upload template (display format).
 const TODAY_US = () => { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`; };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -1465,7 +1467,7 @@ function ContactsSection({ companyId, contacts, reload, users, effectiveUser }) 
   );
 }
 function ContactModal({ contact, onSave, onClose }) {
-  const [f, setF] = useState(contact || { name: "", title: "", phone: "", cellPhone: "", email: "", notes: "" });
+  const [f, setF] = useState(contact || { name: "", title: "", phone: "", phoneExt: "", cellPhone: "", email: "", notes: "" });
   const [err, setErr] = useState("");
   const submit = () => { if (!f.name.trim()) { setErr("Name is required."); return; } onSave(contact ? { ...f, id: contact.id } : f); };
   return (
@@ -1479,7 +1481,12 @@ function ContactModal({ contact, onSave, onClose }) {
         <Field label="Title"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} style={inputStyle} /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Work phone"><input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
+          <Field label="Work phone">
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} />
+              <input value={f.phoneExt || ""} onChange={(e) => setF({ ...f, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 74 }} placeholder="Ext" title="Extension" />
+            </div>
+          </Field>
         </div>
         <Field label="Cell phone"><input value={f.cellPhone || ""} onChange={(e) => setF({ ...f, cellPhone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
@@ -2979,7 +2986,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptTz: liveUser.timezone || "America/New_York", apptEmail: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptTz: liveUser.timezone || "America/New_York", apptEmail: "", workingFor: isBDR ? "" : "self" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -3045,7 +3052,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     await saveEntries(() => api.addEntry({
       userId: liveUser.id, date: form.date,
       company: form.company.trim(), ban: form.ban.trim(), fan: form.fan.trim(), contact: form.contact.trim(),
-      phone: form.phone.trim(), email: form.email.trim(),
+      phone: form.phone.trim(), phoneExt: form.phoneExt.trim(), email: form.email.trim(),
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
       carrierRep: form.carrierRep.trim(),
       taggedRepId,
@@ -3072,7 +3079,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         }
       } catch (e) { /* best-effort; activity already saved */ }
     }
-    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "" });
+    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "" });
     setExtraContacts([]);
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
@@ -3146,7 +3153,12 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Phone"><input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={inputStyle} placeholder="(610) 555-0100" /></Field>
+          <Field label="Phone">
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} placeholder="(610) 555-0100" />
+              <input value={form.phoneExt || ""} onChange={(e) => setForm({ ...form, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 74 }} placeholder="Ext" title="Extension" />
+            </div>
+          </Field>
           <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
         </div>
         <div style={{ marginBottom: 14 }}>
@@ -3866,7 +3878,7 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
   const exportXlsx = () => {
     const data = rows.map((c) => ({
       Name: c.name || "", Title: c.title || "", Company: c.companyName || "",
-      "Work Phone": c.phone || "", "Cell Phone": c.cellPhone || "",
+      "Work Phone": c.phone || "", "Ext": c.phoneExt || "", "Cell Phone": c.cellPhone || "",
       Email: c.email || "", Notes: c.notes || "",
       ...(seesAll ? { "Created by": nameOf(c.createdBy) || "—" } : {}),
     }));
@@ -3947,7 +3959,7 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
                               style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, maxWidth: "100%", display: "block", textAlign: "left", ...trunc }}>{c.companyName}</button>
                           ) : "—"}
                         </td>
-                        <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{c.phone || "—"}</td>
+                        <td style={{ padding: cellPad, whiteSpace: "nowrap" }}>{c.phone ? c.phone + (c.phoneExt ? ` x${c.phoneExt}` : "") : "—"}</td>
                         <td style={{ padding: cellPad, ...trunc }} title={c.email || ""}>{c.email || "—"}</td>
                       </tr>
                       {isOpen && (
@@ -3956,7 +3968,7 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
                             <div style={{ padding: "6px 22px 18px 48px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px 28px" }}>
                               <div><div style={kvLabel}>Title</div><div style={kvValue}>{c.title || "—"}</div></div>
                               <div><div style={kvLabel}>Cell phone</div><div style={kvValue}>{c.cellPhone || "—"}</div></div>
-                              <div><div style={kvLabel}>Work phone</div><div style={kvValue}>{c.phone || "—"}</div></div>
+                              <div><div style={kvLabel}>Work phone</div><div style={kvValue}>{c.phone ? c.phone + (c.phoneExt ? ` x${c.phoneExt}` : "") : "—"}</div></div>
                               <div><div style={kvLabel}>Email</div><div style={kvValue}>{c.email || "—"}</div></div>
                               {seesAll && <div><div style={kvLabel}>Created by</div><div style={kvValue}>{nameOf(c.createdBy) || "—"}</div></div>}
                               <div style={{ gridColumn: "1 / -1" }}><div style={kvLabel}>Notes</div><div style={kvValue}>{c.notes || "—"}</div></div>
