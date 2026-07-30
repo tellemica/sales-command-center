@@ -1479,15 +1479,13 @@ function ContactModal({ contact, onSave, onClose }) {
         </div>
         <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} style={inputStyle} autoFocus /></Field>
         <Field label="Title"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} style={inputStyle} /></Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
-          <Field label="Work phone">
-            <div style={{ display: "flex", gap: 6 }}>
-              <input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} />
-              <input value={f.phoneExt || ""} onChange={(e) => setF({ ...f, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 74 }} placeholder="Ext" title="Extension" />
-            </div>
-          </Field>
-        </div>
+        <Field label="Email"><input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={inputStyle} /></Field>
+        <Field label="Work phone">
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={f.phone} onChange={(e) => setF({ ...f, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 0 }} />
+            <input value={f.phoneExt || ""} onChange={(e) => setF({ ...f, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 90, flexShrink: 0 }} placeholder="Ext" title="Extension" />
+          </div>
+        </Field>
         <Field label="Cell phone"><input value={f.cellPhone || ""} onChange={(e) => setF({ ...f, cellPhone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
         {err && <div style={{ color: "#B4453F", fontSize: 13, marginBottom: 10 }}>{err}</div>}
         <button onClick={submit} className="tap" style={{ width: "100%", background: INK, color: PAPER, border: "none", borderRadius: 8, padding: 12, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Save contact</button>
@@ -3152,15 +3150,13 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
         </div>
         <Field label="Contact"><input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} style={inputStyle} placeholder="Name / title" /></Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Phone">
-            <div style={{ display: "flex", gap: 6 }}>
-              <input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1 }} placeholder="(610) 555-0100" />
-              <input value={form.phoneExt || ""} onChange={(e) => setForm({ ...form, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 74 }} placeholder="Ext" title="Extension" />
-            </div>
-          </Field>
-          <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
-        </div>
+        <Field label="Phone">
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={form.phone} onChange={(e) => setForm({ ...form, phone: formatPhone(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, flex: 1, minWidth: 0 }} placeholder="(610) 555-0100" />
+            <input value={form.phoneExt || ""} onChange={(e) => setForm({ ...form, phoneExt: formatExt(e.target.value) })} style={{ ...inputStyle, marginBottom: 0, width: 90, flexShrink: 0 }} placeholder="Ext" title="Extension" />
+          </div>
+        </Field>
+        <Field label="Email"><input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} placeholder="name@company.com" /></Field>
         <div style={{ marginBottom: 14 }}>
           {extraContacts.map((c, i) => (
             <div key={i} style={{ background: "#F8FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 10, marginBottom: 8 }}>
