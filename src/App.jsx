@@ -3057,11 +3057,11 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       carrierRep: form.carrierRep.trim(),
       taggedRepId,
     }));
-    // If an appointment was set with a date/time, ensure a deal exists for it.
-    // (The invite is downloaded via the button in the appointment box.)
-    if ((+form.appts || 0) >= 1 && form.apptDate && form.apptTime) {
+    // Any logged appointment generates an opportunity. Date/time is optional —
+    // if provided, it's attached; if not, the rep can add it on the deal later.
+    if ((+form.appts || 0) >= 1) {
       try {
-        const start = zonedToUTC(form.apptDate, form.apptTime, form.apptTz);
+        const start = (form.apptDate && form.apptTime) ? zonedToUTC(form.apptDate, form.apptTime, form.apptTz) : null;
         await api.upsertAppointmentDeal({
           company: form.company.trim(), contact: form.contact.trim(),
           contactEmail: form.email.trim(), apptAt: start ? start.toISOString() : null,
