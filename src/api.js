@@ -250,7 +250,9 @@ export async function deleteDeal(id) {
 // company already has an OPEN deal, attach the appointment to it; otherwise
 // create a new deal in the "appointment" stage. Returns the saved deal.
 export async function upsertAppointmentDeal({ company, contact, contactEmail, apptAt, ownerId, taggedRepId }) {
+  if (!company || !company.trim()) return null; // need a company to hang the opportunity on
   const companyId = await findOrCreateCompany(company);
+  if (!companyId) return null;
   // Look for an existing open deal on this company.
   const { data: existing } = await supabase.from("deals")
     .select("*").eq("company_id", companyId).not("stage", "in", '("won","lost")')
