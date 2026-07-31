@@ -3667,7 +3667,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         {(() => {
           const lines = f.commissionLines || [];
           const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next) * 100) / 100 }));
-          const addLine = () => setLines([...lines, { vendor: "att", category: "new", count: "", mrc: "" }]);
+          const addLine = () => setLines([...lines, { vendor: "att", category: "new", count: "", mrc: "65" }]);
           const updateLine = (i, patch) => setLines(lines.map((l, j) => j === i ? { ...l, ...patch } : l));
           const removeLine = (i) => setLines(lines.filter((_, j) => j !== i));
           const total = dealCommissionTotal(lines);
@@ -3699,7 +3699,16 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
                 return (
                   <div key={i} style={{ background: "#F8FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: 10, marginBottom: 8 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#8494A6" }}>Line {i + 1}{lineCommission(l) > 0 ? ` · ${fmtMoney(lineCommission(l))} total` : ""}</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A6B7B" }}>
+                        {(() => {
+                          const vLabel = VENDORS.find((v) => v.id === l.vendor)?.label || "";
+                          const cLabel = COMMISSION_CATEGORIES.find((c) => c.id === l.category)?.label || "";
+                          const cnt = Number(l.count) || 0;
+                          const summary = [vLabel, cLabel, cnt ? `× ${cnt}` : ""].filter(Boolean).join(" · ");
+                          return summary || `Line ${i + 1}`;
+                        })()}
+                        {isAdminMgr && lineCommission(l) > 0 ? <span style={{ fontWeight: 500, opacity: 0.7 }}> · {fmtMoney(lineCommission(l))} total</span> : ""}
+                      </span>
                       <button type="button" onClick={() => removeLine(i)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, display: "flex" }}><X size={14} /></button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
@@ -3726,6 +3735,7 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
                         <input type="number" min="0" value={isFlat ? "" : l.mrc} disabled={isFlat} onChange={(e) => updateLine(i, { mrc: e.target.value })}
                           style={{ ...inputStyle, marginBottom: 0, background: isFlat ? "#EEF1F4" : "#fff", cursor: isFlat ? "not-allowed" : "text" }}
                           placeholder={isFlat ? `$${rate.amount}/line flat` : "0"} />
+                        {!isFlat && <div style={{ fontSize: 10, opacity: 0.55, marginTop: 3 }}>Defaults to $65 — change if the plan differs.</div>}
                       </div>
                     </div>
                   </div>
