@@ -1711,10 +1711,14 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
         case "calls": av = a.calls || 0; bv = b.calls || 0; break;
         case "emails": av = a.emails || 0; bv = b.emails || 0; break;
         case "appts": av = a.appts || 0; bv = b.appts || 0; break;
-        default: av = a.date || ""; bv = b.date || "";
+        // Date sorts by the full save timestamp so same-day entries order by time.
+        default: av = a.createdAt || a.date || ""; bv = b.createdAt || b.date || "";
       }
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ? 1 : -1;
+      // Tiebreaker: most recently entered first (by save timestamp).
+      const at = a.createdAt || "", bt = b.createdAt || "";
+      if (at !== bt) return at < bt ? 1 : -1;
       return (a.id < b.id ? 1 : -1);
     });
     return r;
