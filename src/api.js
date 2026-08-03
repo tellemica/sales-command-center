@@ -169,12 +169,16 @@ async function syncCompanyDetailsFromEntry(entry) {
     const companyId = entry.companyId;
     if (!companyId) return;
     const { data: co } = await supabase
-      .from("companies").select("ban, fan, phone").eq("id", companyId).single();
+      .from("companies").select("ban, fan, phone, owner_id, carrier_rep").eq("id", companyId).single();
     if (!co) return;
     const patch = {};
     if (!(co.ban || "").trim() && (entry.ban || "").trim()) patch.ban = entry.ban.trim();
     if (!(co.fan || "").trim() && (entry.fan || "").trim()) patch.fan = entry.fan.trim();
     if (!(co.phone || "").trim() && (entry.phone || "").trim()) patch.phone = entry.phone.trim();
+    // Set the Tellemica Sales Rep (owner) from the tagged rep, if none yet.
+    if (!co.owner_id && entry.taggedRepId) patch.owner_id = entry.taggedRepId;
+    // Set the carrier rep, if none yet.
+    if (!(co.carrier_rep || "").trim() && (entry.carrierRep || "").trim()) patch.carrier_rep = entry.carrierRep.trim();
     if (Object.keys(patch).length) {
       await supabase.from("companies").update(patch).eq("id", companyId);
     }
@@ -338,7 +342,7 @@ export async function clearUserGoal(userId) {
 const toCamelCompany = (c) => c && ({
   id: c.id, name: c.name, nameKey: c.name_key,
   website: c.website || "", phone: c.phone || "", address: c.address || "",
-  ban: c.ban || "", fan: c.fan || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
+  ban: c.ban || "", fan: c.fan || "", carrierRep: c.carrier_rep || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
 });
 
 export async function listCompanies() {
@@ -362,6 +366,7 @@ export async function updateCompany(id, patch) {
   // Ownership: null out empty strings so the FK stays clean.
   if (patch.ownerId !== undefined) db.owner_id = patch.ownerId || null;
   if (patch.secondaryOwnerId !== undefined) db.secondary_owner_id = patch.secondaryOwnerId || null;
+  if (patch.carrierRep !== undefined) db.carrier_rep = patch.carrierRep || null;
   if (patch.name !== undefined) db.name_key = patch.name.trim().toLowerCase();
   const { data, error } = await supabase.from("companies").update(db).eq("id", id).select().single();
   if (error) throw error;
