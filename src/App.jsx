@@ -453,6 +453,21 @@ export default function App() {
   const visibleEntries = entries.filter(canSeeEntry);
   const visibleDeals = deals.filter(canSeeDeal);
 
+  // Which companies a user may see: admins/managers see all; everyone else sees
+  // only companies they have a visible activity or deal for. This closes a leak
+  // where the companies/contacts tables (shared, not row-scoped by RLS) exposed
+  // every rep's accounts to every other rep.
+  const seesAllCompanies = role === "admin" || role === "management";
+  const visibleCompanyIds = (() => {
+    if (seesAllCompanies) return null; // null = no restriction
+    const ids = new Set();
+    visibleEntries.forEach((e) => { if (e.companyId) ids.add(e.companyId); });
+    visibleDeals.forEach((d) => { if (d.companyId) ids.add(d.companyId); });
+    return ids;
+  })();
+  const canSeeCompany = (companyId) => seesAllCompanies || (visibleCompanyIds && visibleCompanyIds.has(companyId));
+  const visibleCompanies = seesAllCompanies ? companies : companies.filter((c) => visibleCompanyIds.has(c.id));
+
   // Count overdue/due-today follow-ups across visible deals + scoped leads, for the nav badge & login nudge.
   const scopedLeads = leads.filter((l) => role === "admin" || role === "management" || l.assignedTo === effectiveUser.id || l.createdBy === effectiveUser.id);
   const dueCount = (() => {
@@ -467,7 +482,7 @@ export default function App() {
     const q = search.trim().toLowerCase();
     if (q.length < 2) return null;
     const hit = (s) => (s || "").toLowerCase().includes(q);
-    const cos = companies.filter((c) => hit(c.name) || hit(c.ban) || hit(c.fan)).slice(0, 6)
+    const cos = visibleCompanies.filter((c) => hit(c.name) || hit(c.ban) || hit(c.fan)).slice(0, 6)
       .map((c) => ({ type: "Company", id: c.id, title: c.name, sub: c.ban || "", onGo: () => { openCompanyById(c.id); setSearch(""); } }));
     const dls = visibleDeals.filter((d) => hit(d.company) || hit(d.contact)).slice(0, 6)
       .map((d) => ({ type: "Deal", id: d.id, title: d.company, sub: `${STAGE[d.stage]?.label || d.stage}${d.value ? ` · ${fmtMoney(d.value)}` : ""}`, onGo: () => { setView("pipeline"); setSearch(""); } }));
@@ -643,6 +658,7 @@ export default function App() {
             <CompanyDetail
               companyId={selectedCompanyId}
               companies={companies}
+              canSeeCompany={canSeeCompany}
               entries={visibleEntries}
               deals={visibleDeals}
               users={users}
@@ -655,7 +671,7 @@ export default function App() {
             />
           ) : (
             <CompaniesList
-              companies={companies}
+              companies={visibleCompanies}
               entries={visibleEntries}
               deals={visibleDeals}
               onOpen={openCompanyById}
@@ -663,7 +679,7 @@ export default function App() {
           )
         )}
         {view === "contacts" && (
-          <ContactsView effectiveUser={effectiveUser} users={users} onOpenCompany={openCompanyById} />
+          <ContactsView effectiveUser={effectiveUser} users={users} visibleCompanyIds={visibleCompanyIds} seesAllCompanies={seesAllCompanies} onOpenCompany={openCompanyById} />
         )}
         {view === "leads" && (
           <LeadsView
@@ -1185,8 +1201,11 @@ function CompaniesList({ companies, entries, deals, onOpen }) {
 }
 
 // ---- CRM: Company detail page (Overview, Activities, Deals, Contacts, Notes, Attachments) ----
-function CompanyDetail({ companyId, companies, entries, deals, users, effectiveUser, saveDeals, visibleUserIds, onBack, onOpenCompany, refetch }) {
+function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, users, effectiveUser, saveDeals, visibleUserIds, onBack, onOpenCompany, refetch }) {
   const company = companies.find((c) => c.id === companyId);
+  // Guard: a rep who reaches a company outside their scope (stale link, search)
+  // sees an access notice instead of another rep's account.
+  const blocked = canSeeCompany && !canSeeCompany(companyId);
   const [tab, setTab] = useState("overview");
   const [contacts, setContacts] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -1234,6 +1253,19 @@ function CompanyDetail({ companyId, companies, entries, deals, users, effectiveU
     ["notes", `Notes (${notes.length})`, Pencil],
     ["attachments", `Files (${attachments.length})`, FileSpreadsheet],
   ];
+
+  if (blocked) {
+    return (
+      <>
+        <button onClick={onBack} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", color: EMAIL, fontSize: 13.5, fontWeight: 600, cursor: "pointer", marginBottom: 12, padding: 0 }}>
+          <ChevronLeft size={16} /> All companies
+        </button>
+        <Panel title="Not available">
+          <Empty msg="You don't have access to this company. You can only see companies you've logged activity or deals for." />
+        </Panel>
+      </>
+    );
+  }
 
   return (
     <>
@@ -3841,13 +3873,13 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
 
 // All contacts across companies. Reps/BDRs see the ones they created (plus any
 // with no recorded creator); managers and admins see everything.
-function ContactsView({ effectiveUser, users, onOpenCompany }) {
+function ContactsView({ effectiveUser, users, visibleCompanyIds, seesAllCompanies, onOpenCompany }) {
   const [contacts, setContacts] = useState(null);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState("asc");
 
-  const seesAll = effectiveUser.role === "admin" || effectiveUser.role === "management";
+  const seesAll = seesAllCompanies;
   const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
 
   useEffect(() => {
@@ -3858,8 +3890,10 @@ function ContactsView({ effectiveUser, users, onOpenCompany }) {
     return () => { alive = false; };
   }, []);
 
+  // Reps/BDRs see contacts only for companies they can see (based on their
+  // visible activity/deals). Admins/managers see all.
   const scoped = (contacts || []).filter((c) =>
-    seesAll || !c.createdBy || c.createdBy === effectiveUser.id
+    seesAll || (visibleCompanyIds && c.companyId && visibleCompanyIds.has(c.companyId))
   );
 
   const filtered = scoped.filter((c) => {
