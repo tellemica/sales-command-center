@@ -1322,7 +1322,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
                 const ownerPool = users.filter((u) => u.role === "bdr" || u.role === "sales" || u.role === "management" || u.role === "admin");
                 return (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <Field label="Account owner">
+                    <Field label="Tellemica Sales Rep">
                       <div style={{ position: "relative" }}>
                         <select value={draft.ownerId || ""} disabled={ownerLocked}
                           onChange={(e) => setDraft({ ...draft, ownerId: e.target.value })}
@@ -1362,7 +1362,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
                 <InfoRow label="BAN" value={company.ban} />
                 <InfoRow label="FAN" value={company.fan} />
                 <InfoRow label="Address" value={company.address} />
-                <InfoRow label="Account owner" value={company.ownerId ? nameOf(company.ownerId) : ""} />
+                <InfoRow label="Tellemica Sales Rep" value={company.ownerId ? nameOf(company.ownerId) : ""} />
                 {company.secondaryOwnerId && <InfoRow label="Shared with" value={nameOf(company.secondaryOwnerId)} />}
               </div>
               {company.notes && <p style={{ fontSize: 14, lineHeight: 1.6, margin: "0 0 14px", opacity: 0.85 }}>{company.notes}</p>}
