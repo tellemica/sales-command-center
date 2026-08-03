@@ -1241,7 +1241,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
 
   const saveInfo = async () => {
     setBusy("Saving…");
-    try { await api.updateCompany(companyId, { name: draft.name, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, notes: draft.notes, ownerId: draft.ownerId, secondaryOwnerId: draft.secondaryOwnerId }); await refetch(); setEditing(false); }
+    try { await api.updateCompany(companyId, { name: draft.name, website: draft.website, phone: draft.phone, address: draft.address, ban: draft.ban, fan: draft.fan, carrierRep: draft.carrierRep, notes: draft.notes, ownerId: draft.ownerId, secondaryOwnerId: draft.secondaryOwnerId }); await refetch(); setEditing(false); }
     finally { setBusy(""); }
   };
 
@@ -1313,6 +1313,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
                 <Field label="Phone"><input value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: formatPhone(e.target.value) })} style={inputStyle} /></Field>
                 <Field label="BAN"><input value={draft.ban || ""} onChange={(e) => setDraft({ ...draft, ban: e.target.value })} style={inputStyle} /></Field>
                 <Field label="FAN"><input value={draft.fan || ""} onChange={(e) => setDraft({ ...draft, fan: e.target.value })} style={inputStyle} /></Field>
+                <Field label="Carrier Rep"><input value={draft.carrierRep || ""} onChange={(e) => setDraft({ ...draft, carrierRep: e.target.value })} style={inputStyle} placeholder="AT&T / VZW / TMo rep" /></Field>
                 <Field label="Address"><input value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} style={inputStyle} /></Field>
               </div>
               {(() => {
@@ -1362,6 +1363,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
                 <InfoRow label="BAN" value={company.ban} />
                 <InfoRow label="FAN" value={company.fan} />
                 <InfoRow label="Address" value={company.address} />
+                <InfoRow label="Carrier Rep" value={company.carrierRep} />
                 <InfoRow label="Tellemica Sales Rep" value={company.ownerId ? nameOf(company.ownerId) : ""} />
                 {company.secondaryOwnerId && <InfoRow label="Shared with" value={nameOf(company.secondaryOwnerId)} />}
               </div>
