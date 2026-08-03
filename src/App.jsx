@@ -3025,9 +3025,21 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   // Unique company names from everything the user can see, for autocomplete.
   const companyIndex = useMemo(() => {
     const map = new Map();
-    (allEntries || entries).forEach((e) => {
+    // Walk newest-first so the first value we keep per field is the most recent.
+    const sorted = [...(allEntries || entries)].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    sorted.forEach((e) => {
       const c = (e.company || "").trim();
-      if (c && !map.has(c.toLowerCase())) map.set(c.toLowerCase(), { company: c, ban: e.ban || "", fan: e.fan || "", contact: e.contact || "", phone: e.phone || "", email: e.email || "" });
+      if (!c) return;
+      const key = c.toLowerCase();
+      const cur = map.get(key) || { company: c, ban: "", fan: "", contact: "", phone: "", email: "", carrierRep: "" };
+      // Fill any field that's still blank with this (older) entry's value.
+      if (!cur.ban) cur.ban = e.ban || "";
+      if (!cur.fan) cur.fan = e.fan || "";
+      if (!cur.contact) cur.contact = e.contact || "";
+      if (!cur.phone) cur.phone = e.phone || "";
+      if (!cur.email) cur.email = e.email || "";
+      if (!cur.carrierRep) cur.carrierRep = e.carrierRep || "";
+      map.set(key, cur);
     });
     return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
   }, [allEntries, entries]);
@@ -3083,7 +3095,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
 
   const pickCompany = (c) => {
     // Reuse known details for this company, but let the user override any field.
-    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email }));
+    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email, carrierRep: f.carrierRep || c.carrierRep }));
     setShowSuggest(false);
   };
 
