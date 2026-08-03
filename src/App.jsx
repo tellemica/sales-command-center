@@ -3068,6 +3068,19 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     ? companyIndex.filter((c) => c.company.toLowerCase().includes(form.company.trim().toLowerCase())).slice(0, 6)
     : [];
 
+  // History for the account currently typed in the Company field: if the name
+  // exactly matches a company that has prior activity, gather those sessions so
+  // the rep sees the account's history alongside the form.
+  const accountHistory = useMemo(() => {
+    const name = form.company.trim().toLowerCase();
+    if (name.length < 2) return null;
+    const rows = (allEntries || entries).filter((e) => (e.company || "").trim().toLowerCase() === name);
+    if (rows.length === 0) return null;
+    rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    const totals = rows.reduce((t, e) => ({ calls: t.calls + (e.calls || 0), emails: t.emails + (e.emails || 0), appts: t.appts + (e.appts || 0) }), { calls: 0, emails: 0, appts: 0 });
+    return { name: rows[0].company, rows, totals, lastDate: rows[0].date };
+  }, [form.company, allEntries, entries]);
+
   const pickCompany = (c) => {
     // Reuse known details for this company, but let the user override any field.
     setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email }));
@@ -3327,24 +3340,62 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
         {toast && <div style={{ marginTop: 12, background: CALL + "18", color: CALL, borderRadius: 8, padding: "10px 12px", fontSize: 13.5, fontWeight: 500, textAlign: "center" }}>Saved — dashboard updated.</div>}
       </div>
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 22 }}>
-        <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>My recent activity</h2>
-        {mine.length === 0 ? <Empty msg="Nothing logged yet. Your saved sessions appear here." /> : (
-          <div>
-            {mine.map((e) => (
-              <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: `1px solid ${LINE_C}` }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{isBDR ? ` · ${e.taggedRepId ? repName(e.taggedRepId) || "Rep" : "Self-generated"}` : ""}</div>
-                  {e.notes && <div style={{ fontSize: 12, opacity: 0.5 }}>{e.notes}</div>}
+        {accountHistory ? (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
+              <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={accountHistory.name}>{accountHistory.name}</h2>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: CYAN, background: CYAN + "16", borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>Account history</span>
+            </div>
+            <p style={{ margin: "0 0 14px", fontSize: 12.5, opacity: 0.55 }}>
+              {accountHistory.rows.length} prior {accountHistory.rows.length === 1 ? "session" : "sessions"} · last {new Date(accountHistory.lastDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </p>
+            <div style={{ display: "flex", gap: 16, padding: "10px 14px", background: PAPER, borderRadius: 9, marginBottom: 14 }}>
+              <Pill icon={Phone} color={CALL} n={accountHistory.totals.calls} />
+              <Pill icon={Mail} color={EMAIL} n={accountHistory.totals.emails} />
+              <Pill icon={CalendarCheck} color={APPT} n={accountHistory.totals.appts} />
+              <span style={{ fontSize: 12, opacity: 0.5, marginLeft: "auto", alignSelf: "center" }}>all-time</span>
+            </div>
+            <div style={{ maxHeight: 440, overflowY: "auto" }}>
+              {accountHistory.rows.map((e) => (
+                <div key={e.id} style={{ padding: "10px 0", borderBottom: `1px solid ${LINE_C}` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600 }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                      <Pill icon={Phone} color={CALL} n={e.calls} />
+                      <Pill icon={Mail} color={EMAIL} n={e.emails} />
+                      <Pill icon={CalendarCheck} color={APPT} n={e.appts} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 11.5, opacity: 0.5, marginTop: 2 }}>
+                    {repName(e.userId) || "Someone"}{e.contact ? ` · ${e.contact}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
+                  </div>
+                  {e.notes && <div style={{ fontSize: 12, opacity: 0.6, marginTop: 3 }}>{e.notes}</div>}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <Pill icon={Phone} color={CALL} n={e.calls} />
-                  <Pill icon={Mail} color={EMAIL} n={e.emails} />
-                  <Pill icon={CalendarCheck} color={APPT} n={e.appts} />
-                  <button onClick={() => del(e.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={15} /></button>
-                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>My recent activity</h2>
+            {mine.length === 0 ? <Empty msg="Nothing logged yet. Your saved sessions appear here." /> : (
+              <div>
+                {mine.map((e) => (
+                  <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: `1px solid ${LINE_C}` }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}{isBDR ? ` · ${e.taggedRepId ? repName(e.taggedRepId) || "Rep" : "Self-generated"}` : ""}</div>
+                      {e.notes && <div style={{ fontSize: 12, opacity: 0.5 }}>{e.notes}</div>}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                      <Pill icon={Phone} color={CALL} n={e.calls} />
+                      <Pill icon={Mail} color={EMAIL} n={e.emails} />
+                      <Pill icon={CalendarCheck} color={APPT} n={e.appts} />
+                      <button onClick={() => del(e.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={15} /></button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     </div>
