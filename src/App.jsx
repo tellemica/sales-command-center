@@ -3147,7 +3147,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       const c = (e.company || "").trim();
       if (!c) return;
       const key = c.toLowerCase();
-      const cur = map.get(key) || { company: c, ban: "", fan: "", contact: "", phone: "", email: "", carrierRep: "" };
+      const cur = map.get(key) || { company: c, ban: "", fan: "", contact: "", phone: "", email: "", carrierRep: "", taggedRepId: "" };
       // Fill any field that's still blank with this (older) entry's value.
       if (!cur.ban) cur.ban = e.ban || "";
       if (!cur.fan) cur.fan = e.fan || "";
@@ -3155,6 +3155,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
       if (!cur.phone) cur.phone = e.phone || "";
       if (!cur.email) cur.email = e.email || "";
       if (!cur.carrierRep) cur.carrierRep = e.carrierRep || "";
+      if (!cur.taggedRepId) cur.taggedRepId = e.taggedRepId || "";
       map.set(key, cur);
     });
     return [...map.values()].sort((a, b) => a.company.localeCompare(b.company));
@@ -3209,9 +3210,30 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
     return { name: rows[0].company, rows, totals, lastDate: rows[0].date };
   }, [form.company, allEntries, entries]);
 
+  // If the typed company matches a known account (even without clicking a
+  // suggestion) and the sales-rep field is still empty, pre-fill it from the
+  // most recent prior tagged rep — same idea as the carrier-rep autofill.
+  useEffect(() => {
+    if (form.workingFor) return; // don't override a choice already made
+    const name = form.company.trim().toLowerCase();
+    if (name.length < 2) return;
+    const match = companyIndex.find((c) => c.company.toLowerCase() === name);
+    if (match && match.taggedRepId && salesReps.some((s) => s.id === match.taggedRepId)) {
+      setForm((f) => (f.workingFor ? f : { ...f, workingFor: match.taggedRepId }));
+    }
+  }, [form.company, companyIndex]); // eslint-disable-line
+
   const pickCompany = (c) => {
     // Reuse known details for this company, but let the user override any field.
-    setForm((f) => ({ ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email, carrierRep: f.carrierRep || c.carrierRep }));
+    setForm((f) => {
+      const next = { ...f, company: c.company, ban: f.ban || c.ban, fan: f.fan || c.fan, contact: f.contact || c.contact, phone: f.phone || c.phone, email: f.email || c.email, carrierRep: f.carrierRep || c.carrierRep };
+      // Pre-fill the Tellemica Sales Rep from the account's prior tagged rep,
+      // but only if the field is still unset and that rep is a valid option.
+      if ((!f.workingFor || f.workingFor === "") && c.taggedRepId && salesReps.some((s) => s.id === c.taggedRepId)) {
+        next.workingFor = c.taggedRepId;
+      }
+      return next;
+    });
     setShowSuggest(false);
   };
 
