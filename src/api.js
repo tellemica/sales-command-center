@@ -221,6 +221,29 @@ export async function deleteEntry(id) {
   if (error) throw error;
 }
 
+// Admin edit of an existing activity. Accepts a partial camelCase patch.
+export async function updateEntry(id, patch) {
+  const db = {};
+  const map = { date: "date", calls: "calls", emails: "emails", appts: "appts", notes: "notes", company: "company", ban: "ban", fan: "fan", contact: "contact", phone: "phone", phoneExt: "phone_ext", email: "email", carrierRep: "carrier_rep", taggedRepId: "tagged_rep_id" };
+  for (const k in map) {
+    if (patch[k] !== undefined) {
+      let v = patch[k];
+      if (["calls", "emails", "appts"].includes(k)) v = Number(v) || 0;
+      if (k === "taggedRepId") v = v || null;
+      db[map[k]] = v;
+    }
+  }
+  const { error } = await supabase.from("entries").update(db).eq("id", id);
+  if (error) throw error;
+}
+
+// Delete several activities at once (admin duplicate cleanup).
+export async function deleteEntries(ids) {
+  if (!ids || !ids.length) return;
+  const { error } = await supabase.from("entries").delete().in("id", ids);
+  if (error) throw error;
+}
+
 // ---- Deals ----
 export async function listDeals() {
   const { data, error } = await supabase.from("deals").select("*").order("created_at", { ascending: false });
