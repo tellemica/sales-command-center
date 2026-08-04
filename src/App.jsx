@@ -699,7 +699,7 @@ export default function App() {
                 Every activity record in your scope. Click a column to sort, or export to Excel.
               </p>
             </div>
-            <ActivityTable entries={visibleEntries} users={users} liveUser={effectiveUser}
+            <ActivityTable entries={visibleEntries} users={users} liveUser={effectiveUser} saveEntries={saveEntries} adminActions
               onOpenCompany={(id, name) => id ? openCompanyById(id) : openCompanyByName(name)} />
           </>
         )}
@@ -1695,9 +1695,14 @@ function AttachmentsSection({ companyId, attachments, nameOf, reload }) {
 }
 
 // Spreadsheet-style table of activity records, with Excel export.
-function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
+function ActivityTable({ entries, users, liveUser, compact, onOpenCompany, saveEntries, adminActions }) {
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
+  const isAdmin = liveUser && liveUser.role === "admin";
+  const canManage = isAdmin && adminActions && typeof saveEntries === "function";
+  const [selected, setSelected] = useState(() => new Set());
+  const [editRow, setEditRow] = useState(null); // entry being edited
+  const [busy, setBusy] = useState(false);
   const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
   const repOf = (e) => e.taggedRepId ? nameOf(e.taggedRepId) : "Self-generated";
 
@@ -1727,6 +1732,21 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
   }, [entries, sortKey, sortDir, users]);
 
   const setSort = (k) => { if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc")); else { setSortKey(k); setSortDir(k === "date" ? "desc" : "asc"); } };
+
+  const toggleSel = (id) => setSelected((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allShownSelected = rows.length > 0 && rows.every((e) => selected.has(e.id));
+  const toggleAll = () => setSelected(allShownSelected ? new Set() : new Set(rows.map((e) => e.id)));
+  const deleteSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} ${ids.length === 1 ? "activity" : "activities"}? This permanently removes ${ids.length === 1 ? "it" : "them"} and adjusts the numbers. This can't be undone.`)) return;
+    setBusy(true);
+    try { await saveEntries(() => api.deleteEntries(ids)); setSelected(new Set()); } finally { setBusy(false); }
+  };
+  const saveEdit = async (patch) => {
+    setBusy(true);
+    try { await saveEntries(() => api.updateEntry(editRow.id, patch)); setEditRow(null); } finally { setBusy(false); }
+  };
 
   const exportXlsx = () => {
     const data = rows.map((e) => ({
@@ -1783,15 +1803,33 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
           <span style={{ fontSize: 15, fontWeight: 600 }}>Activity records</span>
           <span style={{ fontSize: 12.5, opacity: 0.5 }}>({rows.length})</span>
         </div>
-        <button onClick={exportXlsx} disabled={rows.length === 0} className="tap"
-          style={{ display: "flex", alignItems: "center", gap: 7, background: rows.length ? INK : LINE_C, color: rows.length ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: rows.length ? "pointer" : "default" }}>
-          <Download size={15} /> Export to Excel
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {canManage && selected.size > 0 && (
+            <button onClick={deleteSelected} disabled={busy} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "#B4453F", color: "#fff", border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+              <Trash2 size={15} /> Delete {selected.size} selected
+            </button>
+          )}
+          <button onClick={exportXlsx} disabled={rows.length === 0} className="tap"
+            style={{ display: "flex", alignItems: "center", gap: 7, background: rows.length ? INK : LINE_C, color: rows.length ? PAPER : "#8494A6", border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: rows.length ? "pointer" : "default" }}>
+            <Download size={15} /> Export to Excel
+          </button>
+        </div>
       </div>
+      {canManage && (
+        <div style={{ padding: "8px 18px", borderBottom: `1px solid ${LINE_C}`, background: "#FBFCFD", fontSize: 12, opacity: 0.65 }}>
+          Admin: tick rows to delete duplicates, or expand a row to edit it.
+        </div>
+      )}
       <div style={{ overflowX: "auto", maxHeight: compact ? 420 : "none" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: "#F1F5F9", position: "sticky", top: 0, zIndex: 1 }}>
+              {canManage && (
+                <th style={{ width: 34, borderBottom: `1px solid ${LINE_C}`, textAlign: "center" }}>
+                  <input type="checkbox" checked={allShownSelected} onChange={toggleAll} title="Select all shown" style={{ cursor: "pointer" }} />
+                </th>
+              )}
               <th style={{ width: 34, borderBottom: `1px solid ${LINE_C}` }} />
               {headCols.map(([k, label, isNum]) => (
                 <th key={k} onClick={() => setSort(k)}
@@ -1804,13 +1842,18 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={headCols.length + 1} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No activity records yet.</td></tr>
+              <tr><td colSpan={headCols.length + (canManage ? 2 : 1)} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No activity records yet.</td></tr>
             ) : rows.map((e) => {
               const isOpen = open.has(e.id);
               return (
                 <React.Fragment key={e.id}>
                   <tr onClick={() => toggle(e.id)} className="tap"
-                    style={{ borderBottom: isOpen ? "none" : `1px solid ${LINE_C}`, cursor: "pointer", background: isOpen ? "#F8FAFC" : "transparent" }}>
+                    style={{ borderBottom: isOpen ? "none" : `1px solid ${LINE_C}`, cursor: "pointer", background: isOpen ? "#F8FAFC" : selected.has(e.id) ? "#FBF0EF" : "transparent" }}>
+                    {canManage && (
+                      <td style={{ padding: cellPad, textAlign: "center" }} onClick={(ev) => ev.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(e.id)} onChange={() => toggleSel(e.id)} style={{ cursor: "pointer" }} />
+                      </td>
+                    )}
                     <td style={{ padding: cellPad, textAlign: "center" }}>
                       <ChevronRight size={15} style={{ opacity: 0.5, transition: "transform .15s ease", transform: isOpen ? "rotate(90deg)" : "none" }} />
                     </td>
@@ -1826,7 +1869,7 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
                   </tr>
                   {isOpen && (
                     <tr style={{ borderBottom: `1px solid ${LINE_C}`, background: "#F8FAFC" }}>
-                      <td colSpan={headCols.length + 1} style={{ padding: 0 }}>
+                      <td colSpan={headCols.length + (canManage ? 2 : 1)} style={{ padding: 0 }}>
                         <div style={{ padding: "6px 22px 18px 48px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px 28px" }}>
                           <div><div style={kvLabel}>BAN</div><div style={kvValue}>{e.ban || "—"}</div></div>
                           <div><div style={kvLabel}>FAN</div><div style={kvValue}>{e.fan || "—"}</div></div>
@@ -1838,6 +1881,18 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
                             <div style={kvValue}>{e.carrierRep ? <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 20, fontSize: 12.5, fontWeight: 600, background: "#E7F0FF", color: EMAIL }}>{e.carrierRep}</span> : "—"}</div>
                           </div>
                           <div style={{ gridColumn: "1 / -1" }}><div style={kvLabel}>Notes</div><div style={kvValue}>{e.notes || "—"}</div></div>
+                          {canManage && (
+                            <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, marginTop: 4 }}>
+                              <button onClick={(ev) => { ev.stopPropagation(); setEditRow(e); }} className="tap"
+                                style={{ display: "flex", alignItems: "center", gap: 6, background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                                <Pencil size={13} /> Edit activity
+                              </button>
+                              <button onClick={(ev) => { ev.stopPropagation(); if (confirm("Delete this activity? This can't be undone.")) saveEntries(() => api.deleteEntry(e.id)); }} className="tap"
+                                style={{ display: "flex", alignItems: "center", gap: 6, background: "transparent", color: "#B4453F", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "7px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                                <Trash2 size={13} /> Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1847,6 +1902,61 @@ function ActivityTable({ entries, users, liveUser, compact, onOpenCompany }) {
             })}
           </tbody>
         </table>
+      </div>
+      {editRow && <ActivityEditModal entry={editRow} users={users} onSave={saveEdit} onClose={() => setEditRow(null)} busy={busy} />}
+    </div>
+  );
+}
+
+function ActivityEditModal({ entry, users, onSave, onClose, busy }) {
+  const [f, setF] = useState({
+    date: entry.date || "", calls: entry.calls ?? 0, emails: entry.emails ?? 0, appts: entry.appts ?? 0,
+    company: entry.company || "", ban: entry.ban || "", fan: entry.fan || "", contact: entry.contact || "",
+    phone: entry.phone || "", email: entry.email || "", carrierRep: entry.carrierRep || "",
+    taggedRepId: entry.taggedRepId || "", notes: entry.notes || "",
+  });
+  const reps = (users || []).filter((u) => u.role === "sales");
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(18,33,30,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 70 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, padding: 24, width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: 0 }}>Edit activity</h3>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5 }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Date"><input type="date" value={f.date} onChange={(e) => set("date", e.target.value)} style={inputStyle} /></Field>
+          <Field label="Working for (Sales Rep)">
+            <div style={{ position: "relative" }}>
+              <select value={f.taggedRepId} onChange={(e) => set("taggedRepId", e.target.value)} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+                <option value="">Self-generated</option>
+                {reps.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </Field>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <Field label="Calls"><input type="number" min="0" value={f.calls} onChange={(e) => set("calls", e.target.value)} style={inputStyle} /></Field>
+          <Field label="Emails"><input type="number" min="0" value={f.emails} onChange={(e) => set("emails", e.target.value)} style={inputStyle} /></Field>
+          <Field label="Appts"><input type="number" min="0" value={f.appts} onChange={(e) => set("appts", e.target.value)} style={inputStyle} /></Field>
+        </div>
+        <Field label="Company"><input value={f.company} onChange={(e) => set("company", e.target.value)} style={inputStyle} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="BAN"><input value={f.ban} onChange={(e) => set("ban", e.target.value)} style={inputStyle} /></Field>
+          <Field label="FAN"><input value={f.fan} onChange={(e) => set("fan", e.target.value)} style={inputStyle} /></Field>
+        </div>
+        <Field label="Contact"><input value={f.contact} onChange={(e) => set("contact", e.target.value)} style={inputStyle} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Phone"><input value={f.phone} onChange={(e) => set("phone", formatPhone(e.target.value))} style={inputStyle} /></Field>
+          <Field label="Email"><input value={f.email} onChange={(e) => set("email", e.target.value)} style={inputStyle} /></Field>
+        </div>
+        <Field label="Carrier Rep"><input value={f.carrierRep} onChange={(e) => set("carrierRep", e.target.value)} style={inputStyle} /></Field>
+        <Field label="Notes"><textarea rows={2} value={f.notes} onChange={(e) => set("notes", e.target.value)} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button onClick={() => onSave(f)} disabled={busy} className="tap" style={{ flex: 1, background: INK, color: PAPER, border: "none", borderRadius: 10, padding: 13, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{busy ? "Saving…" : "Save changes"}</button>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "13px 18px", fontSize: 14, cursor: "pointer" }}>Cancel</button>
+        </div>
       </div>
     </div>
   );
