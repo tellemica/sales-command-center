@@ -10,7 +10,7 @@ import { supabase } from "./supabaseClient";
 // boundary so the components stay unchanged.
 // ============================================================
 
-const toCamelProfile = (p) => p && ({ id: p.id, name: p.name, email: p.email, role: p.role, managerId: p.manager_id, timezone: p.timezone || "" });
+const toCamelProfile = (p) => p && ({ id: p.id, name: p.name, email: p.email, role: p.role, managerId: p.manager_id, timezone: p.timezone || "", commissionPct: p.commission_pct != null ? Number(p.commission_pct) : null });
 const toCamelEntry = (e) => e && ({ id: e.id, userId: e.user_id, date: e.date, calls: e.calls, emails: e.emails, appts: e.appts, notes: e.notes, fromDeal: e.from_deal, taggedRepId: e.tagged_rep_id || "", company: e.company || "", ban: e.ban || "", fan: e.fan || "", contact: e.contact || "", phone: e.phone || "", phoneExt: e.phone_ext || "", email: e.email || "", carrierRep: e.carrier_rep || "", companyId: e.company_id || "", createdAt: e.created_at || "" });
 const toCamelDeal = (d) => d && ({ id: d.id, ownerId: d.owner_id, company: d.company, contact: d.contact, contactEmail: d.contact_email || "", value: Number(d.value), commissionLines: Array.isArray(d.commission_lines) ? d.commission_lines : [], stage: d.stage, closeDate: d.close_date || "", notes: d.notes, lostReason: d.lost_reason || "", nextActionDate: d.next_action_date || "", apptAt: d.appt_at || "", stageChangedAt: d.stage_changed_at || "", apptCredited: d.appt_credited, createdAt: d.created_at, taggedRepId: d.tagged_rep_id || "", companyId: d.company_id || "" });
 
@@ -72,6 +72,7 @@ export async function updateProfile(id, patch) {
   if (patch.role !== undefined) dbPatch.role = patch.role;
   if (patch.managerId !== undefined) dbPatch.manager_id = patch.managerId;
   if (patch.timezone !== undefined) dbPatch.timezone = patch.timezone || null;
+  if (patch.commissionPct !== undefined) dbPatch.commission_pct = patch.commissionPct === null || patch.commissionPct === "" ? null : Number(patch.commissionPct);
   const { error } = await supabase.from("profiles").update(dbPatch).eq("id", id);
   if (error) throw error;
 }
