@@ -55,7 +55,7 @@ const ROLES = {
 };
 // Roles that own deals and act like a selling rep (used widely for pools/visibility).
 const SELLER_ROLES = ["sales", "commission"];
-const DEFAULT_COMMISSION_PCT = 0.40; // starting rate for a new commission rep (editable per person)
+const DEFAULT_COMMISSION_PCT = 0.65; // starting rate for a new Senior Sales Rep (editable per person)
 
 const DEFAULT_GOALS = { calls: 1000, emails: 650, appts: 65 };
 
@@ -3905,17 +3905,18 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         <Field label="Contact email (for calendar invites)"><input type="email" value={f.contactEmail || ""} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} style={inputStyle} placeholder="contact@company.com" /></Field>
         {(() => {
           const lines = f.commissionLines || [];
-          // The deal's owner determines the rep rate. Commission reps carry their
-          // own per-person rate; everyone else uses the standard 20%.
-          const ownerId = f.ownerId || (deal && deal.ownerId) || (liveUser && liveUser.id);
-          const ownerUser = (dealUsers || []).find((u) => u.id === ownerId) || liveUser;
-          const ownerRate = ownerUser && ownerUser.role === "commission" && ownerUser.commissionPct > 0 ? ownerUser.commissionPct : REP_COMMISSION_PCT;
-          const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next, ownerRate) * 100) / 100 }));
+          // Each viewer sees THEIR OWN cut. A BDR tagged on a deal sees their rate;
+          // the Sales Rep who owns it sees theirs; a Senior rep sees their 65%.
+          // Managers/admins aren't paid a cut here — they see the vendor total below.
+          const viewerRate = liveUser && typeof liveUser.commissionPct === "number" && liveUser.commissionPct > 0
+            ? liveUser.commissionPct
+            : REP_COMMISSION_PCT;
+          const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next, viewerRate) * 100) / 100 }));
           const addLine = () => setLines([...lines, { vendor: "att", category: "new", count: "", mrc: "65" }]);
           const updateLine = (i, patch) => setLines(lines.map((l, j) => j === i ? { ...l, ...patch } : l));
           const removeLine = (i) => setLines(lines.filter((_, j) => j !== i));
           const total = dealCommissionTotal(lines);
-          const repVal = dealRepValue(lines, ownerRate);
+          const repVal = dealRepValue(lines, viewerRate);
           const selStyle = { ...inputStyle, marginBottom: 0, appearance: "none", cursor: "pointer", fontSize: 13 };
           return (
             <div style={{ marginBottom: 14 }}>
@@ -3991,16 +3992,17 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
               </button>
               {lines.length > 0 && (
                 <div style={{ background: INK, borderRadius: 10, padding: "12px 14px", marginBottom: 12, color: PAPER }}>
-                  {isAdminMgr && (
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                      <span style={{ fontSize: 12.5, opacity: 0.7 }}>Total company commission</span>
-                      <span style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(total)}</span>
+                  {isAdminMgr ? (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>Total company commission</span>
+                      <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600 }}>{fmtMoney(total)}</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>Estimated deal value</span>
+                      <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600 }}>{fmtMoney(repVal)}</span>
                     </div>
                   )}
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Estimated deal value</span>
-                    <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600 }}>{fmtMoney(repVal)}</span>
-                  </div>
                 </div>
               )}
             </div>
@@ -4445,9 +4447,11 @@ function UserModal({ user, salesReps, onSave, onClose }) {
     if (!f.name.trim() || !f.email.trim()) { setErr("Name and email are required."); return; }
     if (!user && !f.password.trim()) { setErr("A password is required for a new user."); return; }
     const data = { ...f, name: f.name.trim(), email: f.email.trim() };
-    // Commission reps carry a rate; default it if left blank. Non-commission roles clear it.
+    // Reps carry a per-person rate; default by role if left blank. Non-selling roles clear it.
     if (data.role === "commission") {
       data.commissionPct = (data.commissionPct === "" || data.commissionPct == null) ? DEFAULT_COMMISSION_PCT : Number(data.commissionPct);
+    } else if (data.role === "bdr" || data.role === "sales") {
+      data.commissionPct = (data.commissionPct === "" || data.commissionPct == null) ? REP_COMMISSION_PCT : Number(data.commissionPct);
     } else {
       data.commissionPct = null;
     }
@@ -4481,16 +4485,18 @@ function UserModal({ user, salesReps, onSave, onClose }) {
             BDRs choose which Sales Rep they're working for each time they log activity or add a deal — no fixed assignment needed.
           </p>
         )}
-        {f.role === "commission" && (
+        {(f.role === "bdr" || f.role === "sales" || f.role === "commission") && (
           <>
             <Field label="Commission rate (%)">
               <input type="number" min="0" max="100" step="0.5"
                 value={f.commissionPct != null && f.commissionPct !== "" ? Math.round(f.commissionPct * 1000) / 10 : ""}
                 onChange={(e) => { const v = e.target.value; setF({ ...f, commissionPct: v === "" ? "" : Number(v) / 100 }); }}
-                style={inputStyle} placeholder="e.g. 40" />
+                style={inputStyle} placeholder={f.role === "commission" ? "e.g. 65" : "e.g. 20"} />
             </Field>
             <p style={{ fontSize: 12.5, opacity: 0.55, margin: "-6px 0 14px", lineHeight: 1.5 }}>
-              Senior Sales Reps work independently (no BDR tagging, own data only) and earn this percentage of a deal's total commission. Enter a whole percentage, e.g. 40 for 40%.
+              {f.role === "commission"
+                ? "Senior Sales Reps work independently (no BDR tagging, own data only) and earn this percentage of a deal's total commission. Defaults to 65%."
+                : "This rep earns this percentage of a deal's total commission. Defaults to 20% — change it if this person's rate differs."}
             </p>
           </>
         )}
