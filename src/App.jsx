@@ -1971,6 +1971,55 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
   const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : "Unknown"; };
   const months = buildMonthOptions().slice().reverse(); // oldest -> newest for trend charts
 
+  // ---- AT&T carrier-rep report (shareable with AT&T; no commission data) ----
+  const [attReps, setAttReps] = useState([]);      // selected carrier rep names
+  const [attRange, setAttRange] = useState(CURRENT_MONTH); // month key or "all"
+  // Distinct carrier reps that appear on activities, alphabetical.
+  const carrierRepOptions = useMemo(() => {
+    const set = new Set();
+    entries.forEach((e) => { const c = (e.carrierRep || "").trim(); if (c) set.add(c); });
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [entries]);
+  const attRows = useMemo(() => {
+    if (attReps.length === 0) return [];
+    const pick = new Set(attReps.map((r) => r.toLowerCase()));
+    return entries
+      .filter((e) => {
+        const c = (e.carrierRep || "").trim().toLowerCase();
+        if (!c || !pick.has(c)) return false;
+        if (attRange !== "all" && !inMonth(e.date, attRange)) return false;
+        return true;
+      })
+      .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  }, [entries, attReps, attRange]);
+  const attTotals = useMemo(() => attRows.reduce((t, e) => ({
+    calls: t.calls + (e.calls || 0), emails: t.emails + (e.emails || 0), appts: t.appts + (e.appts || 0),
+  }), { calls: 0, emails: 0, appts: 0 }), [attRows]);
+  const toggleAttRep = (name) => setAttReps((p) => p.includes(name) ? p.filter((x) => x !== name) : [...p, name]);
+  const exportAttReport = () => {
+    // Activity-only columns — deliberately NO commission or deal-value data,
+    // since this report is shared with AT&T reps/managers.
+    const data = attRows.map((e) => ({
+      Date: e.date,
+      "AT&T Rep": e.carrierRep || "",
+      Company: e.company || "",
+      "Tellemica Rep": nameOf(e.userId),
+      Calls: e.calls || 0,
+      Emails: e.emails || 0,
+      Appointments: e.appts || 0,
+      Contact: e.contact || "",
+      Phone: e.phone ? e.phone + (e.phoneExt ? ` x${e.phoneExt}` : "") : "",
+      Notes: e.notes || "",
+    }));
+    data.push({ Date: "TOTAL", "AT&T Rep": "", Company: "", "Tellemica Rep": "", Calls: attTotals.calls, Emails: attTotals.emails, Appointments: attTotals.appts, Contact: "", Phone: "", Notes: "" });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 12 }, { wch: 20 }, { wch: 28 }, { wch: 18 }, { wch: 7 }, { wch: 7 }, { wch: 12 }, { wch: 22 }, { wch: 18 }, { wch: 50 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "AT&T Activity");
+    const stamp = attRange === "all" ? "all-time" : attRange;
+    XLSX.writeFile(wb, `tellemica-att-activity-${stamp}.xlsx`);
+  };
+
   // --- Activity trends by month ---
   const activityByMonth = months.map((mk) => {
     const rows = entries.filter((e) => inMonth(e.date, mk));
@@ -2030,6 +2079,97 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
         <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Reports</h1>
         <p style={{ fontSize: 14, opacity: 0.6, margin: "4px 0 0" }}>Trends over time and rep comparison, across everything you can see.</p>
       </div>
+
+      <Panel title="AT&T activity report" icon={FileSpreadsheet}>
+        <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 14px" }}>
+          Select one or more AT&T reps to pull every activity Tellemica has logged for them. Shareable with AT&T — shows outreach only, no commission or deal-value data.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 20, marginBottom: 16 }}>
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>AT&T Reps</div>
+            {carrierRepOptions.length === 0 ? (
+              <p style={{ fontSize: 13, opacity: 0.5 }}>No AT&T reps recorded on activities yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 180, overflowY: "auto" }}>
+                {carrierRepOptions.map((name) => {
+                  const on = attReps.includes(name);
+                  return (
+                    <button key={name} type="button" onClick={() => toggleAttRep(name)} className="tap"
+                      style={{ display: "flex", alignItems: "center", gap: 6, background: on ? EMAIL : "#fff", color: on ? "#fff" : INK, border: `1px solid ${on ? EMAIL : LINE_C}`, borderRadius: 20, padding: "6px 13px", fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                      {on && <Check size={13} />}{name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {attReps.length > 0 && (
+              <button type="button" onClick={() => setAttReps([])} className="tap" style={{ marginTop: 10, background: "transparent", border: "none", color: EMAIL, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: 0 }}>Clear selection</button>
+            )}
+          </div>
+          <div style={{ flex: "0 0 200px" }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Date range</div>
+            <div style={{ position: "relative" }}>
+              <select value={attRange} onChange={(e) => setAttRange(e.target.value)} style={{ ...inputStyle, appearance: "none", cursor: "pointer", marginBottom: 0 }}>
+                {buildMonthOptions().map((mk) => <option key={mk} value={mk}>{monthLabel(mk)}</option>)}
+                <option value="all">All time</option>
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </div>
+        </div>
+
+        {attReps.length === 0 ? (
+          <Empty msg="Pick one or more AT&T reps above to build the report." />
+        ) : attRows.length === 0 ? (
+          <Empty msg="No activity found for the selected reps in this date range." />
+        ) : (
+          <>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
+              <div style={{ display: "flex", gap: 18, padding: "10px 16px", background: PAPER, borderRadius: 10 }}>
+                <span style={{ fontSize: 13 }}><strong>{attRows.length}</strong> {attRows.length === 1 ? "activity" : "activities"}</span>
+                <Pill icon={Phone} color={CALL} n={attTotals.calls} />
+                <Pill icon={Mail} color={EMAIL} n={attTotals.emails} />
+                <Pill icon={CalendarCheck} color={APPT} n={attTotals.appts} />
+              </div>
+              <button onClick={exportAttReport} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                <Download size={15} /> Export to Excel
+              </button>
+            </div>
+            <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#F1F5F9" }}>
+                    {["Date", "AT&T Rep", "Company", "Tellemica Rep", "Calls", "Emails", "Appts", "Notes"].map((h) => (
+                      <th key={h} style={{ textAlign: h === "Calls" || h === "Emails" || h === "Appts" ? "center" : "left", padding: "10px 12px", borderBottom: `1px solid ${LINE_C}`, fontSize: 11.5, fontWeight: 700, color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {attRows.map((e) => (
+                    <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
+                      <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                      <td style={{ padding: "9px 12px" }}>{e.carrierRep}</td>
+                      <td style={{ padding: "9px 12px" }}>{e.company || "—"}</td>
+                      <td style={{ padding: "9px 12px" }}>{nameOf(e.userId)}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.calls || 0}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.emails || 0}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>{e.appts || 0}</td>
+                      <td style={{ padding: "9px 12px", maxWidth: 280, opacity: 0.75 }}>{e.notes || "—"}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: "#F8FAFC", fontWeight: 700 }}>
+                    <td style={{ padding: "10px 12px" }} colSpan={4}>Total</td>
+                    <td style={{ padding: "10px 12px", textAlign: "center" }}>{attTotals.calls}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "center" }}>{attTotals.emails}</td>
+                    <td style={{ padding: "10px 12px", textAlign: "center" }}>{attTotals.appts}</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </Panel>
 
       <Panel title="Activity over time" icon={TrendingUp}>
         {!hasActivity ? <Empty msg="No activity recorded yet." /> : (
