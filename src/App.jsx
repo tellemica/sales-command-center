@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import {
-  Phone, Mail, CalendarCheck, TrendingUp, Trophy, Plus, Target,
+  Phone, Mail, CalendarCheck, Check, TrendingUp, Trophy, Plus, Target,
   ChevronDown, ChevronLeft, ChevronRight, X, Users, BarChart3, Trash2, Shield, LogOut,
   UserPlus, Pencil, Eye, EyeOff, Briefcase, DollarSign, Kanban,
   Table2, ArrowRight, Building2, Percent, CheckCircle2, Download, FileSpreadsheet, UserCheck, Clock, AlertTriangle
