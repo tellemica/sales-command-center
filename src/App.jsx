@@ -4411,7 +4411,16 @@ function CarrierRepManager({ saveEntries }) {
 }
 
 function UserModal({ user, salesReps, onSave, onClose }) {
-  const [f, setF] = useState(user || { name: "", email: "", password: "", role: "bdr" });
+  const [f, setF] = useState(() => {
+    const base = user || { name: "", email: "", password: "", role: "bdr" };
+    // If an existing rep has no rate stored yet, show the effective default for
+    // their role so the field reflects what they're actually on (not blank).
+    if (base.commissionPct == null) {
+      if (base.role === "commission") return { ...base, commissionPct: DEFAULT_COMMISSION_PCT };
+      if (base.role === "bdr" || base.role === "sales") return { ...base, commissionPct: REP_COMMISSION_PCT };
+    }
+    return base;
+  });
   const [err, setErr] = useState("");
   // Password-reset state (only for editing an existing non-admin user).
   const [showReset, setShowReset] = useState(false);
@@ -4470,7 +4479,21 @@ function UserModal({ user, salesReps, onSave, onClose }) {
         {!user && <Field label="Password"><input value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} style={inputStyle} placeholder="Set a temporary password" /></Field>}
         <Field label="Role">
           <div style={{ position: "relative" }}>
-            <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+            <select value={f.role} onChange={(e) => {
+              const role = e.target.value;
+              setF((prev) => {
+                const next = { ...prev, role };
+                // Keep the rate sensible when switching roles: if it's blank or still
+                // sitting on the other role's default, snap to the new role's default.
+                const isDefaultish = prev.commissionPct == null || prev.commissionPct === "" || prev.commissionPct === REP_COMMISSION_PCT || prev.commissionPct === DEFAULT_COMMISSION_PCT;
+                if (isDefaultish) {
+                  if (role === "commission") next.commissionPct = DEFAULT_COMMISSION_PCT;
+                  else if (role === "bdr" || role === "sales") next.commissionPct = REP_COMMISSION_PCT;
+                  else next.commissionPct = null;
+                }
+                return next;
+              });
+            }} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
               <option value="bdr">BDR</option>
               <option value="sales">Sales Rep</option>
               <option value="commission">Senior Sales Rep</option>
