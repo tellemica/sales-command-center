@@ -4274,7 +4274,7 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
     }
   };
 
-  const byRole = { admin: [], management: [], sales: [], bdr: [] };
+  const byRole = { admin: [], management: [], sales: [], commission: [], bdr: [] };
   users.forEach((u) => byRole[u.role] && byRole[u.role].push(u));
   const mgrName = (id) => { const m = users.find((u) => u.id === id); return m ? m.name : "—"; };
 
