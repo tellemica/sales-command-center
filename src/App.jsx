@@ -50,8 +50,12 @@ const ROLES = {
   admin: { label: "Admin", rank: 4, color: "#8E3B46" },
   management: { label: "Management", rank: 3, color: "#5B4B8A" },
   sales: { label: "Sales Rep", rank: 2, color: EMAIL },
+  commission: { label: "Senior Sales Rep", rank: 2, color: "#0B7285" },
   bdr: { label: "BDR", rank: 1, color: CALL },
 };
+// Roles that own deals and act like a selling rep (used widely for pools/visibility).
+const SELLER_ROLES = ["sales", "commission"];
+const DEFAULT_COMMISSION_PCT = 0.40; // starting rate for a new commission rep (editable per person)
 
 const DEFAULT_GOALS = { calls: 1000, emails: 650, appts: 65 };
 
@@ -133,8 +137,9 @@ const lineCommission = (line) => {
 };
 // Total company commission across all line items.
 const dealCommissionTotal = (lines) => (lines || []).reduce((sum, l) => sum + lineCommission(l), 0);
-// What the rep/BDR earns (this is what the "deal value" box shows).
-const dealRepValue = (lines) => dealCommissionTotal(lines) * REP_COMMISSION_PCT;
+// What the rep/BDR earns (this is what the "deal value" box shows). Salaried
+// reps/BDRs get the standard 20%; commission reps pass their own per-person rate.
+const dealRepValue = (lines, pct) => dealCommissionTotal(lines) * (typeof pct === "number" && pct > 0 ? pct : REP_COMMISSION_PCT);
 const OPEN_STAGES = STAGES.filter((s) => s.id !== "won" && s.id !== "lost");
 // Reasons captured when a deal is marked Closed Lost — drives win/loss reporting.
 const LOST_REASONS = ["Price / budget", "Went with competitor", "Timing / no decision", "No response / went dark", "Not a fit", "Other"];
@@ -555,7 +560,7 @@ export default function App() {
                     title="View the app as another role/person"
                     style={{ appearance: "none", background: impersonating ? CYAN : "rgba(255,255,255,.12)", color: impersonating ? INK : PAPER, border: impersonating ? "none" : "1px solid rgba(255,255,255,.25)", borderRadius: 8, padding: "8px 30px 8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", maxWidth: "100%", textOverflow: "ellipsis" }}>
                     <option value="">View as… (Admin)</option>
-                    {["management", "sales", "bdr"].map((r) => {
+                    {["management", "sales", "commission", "bdr"].map((r) => {
                       const group = users.filter((u) => u.role === r).sort((a, b) => a.name.localeCompare(b.name));
                       if (group.length === 0) return null;
                       return (
@@ -875,7 +880,7 @@ function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpe
   const [busy, setBusy] = useState("");
 
   // People a lead can be assigned to = BDRs + Sales Reps in scope.
-  const assignable = users.filter((u) => (u.role === "bdr" || u.role === "sales") && (canManageAll || visibleUserIds.includes(u.id)));
+  const assignable = users.filter((u) => (u.role === "bdr" || SELLER_ROLES.includes(u.role)) && (canManageAll || visibleUserIds.includes(u.id)));
   const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
 
   const filtered = leads.filter((l) => {
@@ -1214,8 +1219,8 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
   const [draft, setDraft] = useState(company || {});
   const [busy, setBusy] = useState("");
   const [dealModal, setDealModal] = useState(false);
-  const canEditDeals = ["bdr", "sales", "admin", "management"].includes(effectiveUser.role);
-  const repUsers = users.filter((u) => (!visibleUserIds || visibleUserIds.includes(u.id)) && (u.role === "bdr" || u.role === "sales"));
+  const canEditDeals = ["bdr", "sales", "commission", "admin", "management"].includes(effectiveUser.role);
+  const repUsers = users.filter((u) => (!visibleUserIds || visibleUserIds.includes(u.id)) && (u.role === "bdr" || SELLER_ROLES.includes(u.role)));
 
   const saveNewDeal = (data) => saveDeals(async () => {
     // Force this deal onto the current company, in the appointment-free default flow.
@@ -1319,7 +1324,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
                 const isMgmt = effectiveUser.role === "admin" || effectiveUser.role === "management";
                 // Permission gate: once an owner is set, only admin/management may change it.
                 const ownerLocked = !!company.ownerId && !isMgmt;
-                const ownerPool = users.filter((u) => u.role === "bdr" || u.role === "sales" || u.role === "management" || u.role === "admin");
+                const ownerPool = users.filter((u) => u.role === "bdr" || SELLER_ROLES.includes(u.role) || u.role === "management" || u.role === "admin");
                 return (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                     <Field label="Tellemica Sales Rep">
@@ -1996,7 +2001,7 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
 
   // --- Per-rep comparison (all-time, within visible scope) ---
   const repRows = users
-    .filter((u) => (u.role === "bdr" || u.role === "sales") && (!visibleUserIds || visibleUserIds.includes(u.id)))
+    .filter((u) => (u.role === "bdr" || SELLER_ROLES.includes(u.role)) && (!visibleUserIds || visibleUserIds.includes(u.id)))
     .map((u) => {
       const myEntries = entries.filter((e) => e.userId === u.id);
       const myDeals = deals.filter((d) => d.ownerId === u.id || d.taggedRepId === u.id);
@@ -2248,6 +2253,7 @@ function Dashboard({ entries, deals, leads, users, goals, saveGoals, userGoals, 
 
   const scopeLabel = role === "bdr" ? "Your activity"
     : role === "sales" ? "You + activity tagged to you"
+    : role === "commission" ? "Your activity"
     : "All activity";
 
   const showLeaderboard = role !== "bdr";
@@ -2651,7 +2657,7 @@ function GoalsManager({ users, visibleUserIds, liveUser, goals, saveGoals, userG
   const [savingMsg, setSavingMsg] = useState("");
 
   // Reps this manager/admin can set goals for = those in their scope who log activity.
-  const reps = users.filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales"));
+  const reps = users.filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || SELLER_ROLES.includes(u.role)));
 
   const effGoal = (uid) => userGoals[uid] || goals;
   const hasOverride = (uid) => !!userGoals[uid];
@@ -2848,7 +2854,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   const isPrivileged = role === "admin" || role === "management";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // People this uploader may attribute rows to (BDR/Sale Rep column). Everyone can log as themselves.
-  const assignable = (users || []).filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales" || u.id === liveUser.id));
+  const assignable = (users || []).filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || SELLER_ROLES.includes(u.role) || u.id === liveUser.id));
 
   const [rows, setRows] = useState(null);     // validated preview rows
   const [fileName, setFileName] = useState("");
@@ -3563,7 +3569,7 @@ function Pill({ icon: Icon, color, n }) {
 // ---- Pipeline (CRM) ----
 function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds, entries, saveEntries }) {
   const role = liveUser.role;
-  const canEdit = role === "bdr" || role === "sales" || role === "admin" || role === "management"; // reps own deals; admins/managers can also manage
+  const canEdit = role === "bdr" || SELLER_ROLES.includes(role) || role === "admin" || role === "management"; // reps own deals; admins/managers can also manage
   const [mode, setMode] = useState("board"); // board | table
   // Detect a phone-sized viewport so we can stack the board vertically there.
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 720);
@@ -3578,7 +3584,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
   const [sortKey, setSortKey] = useState("value");
 
   const ownerName = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : "—"; };
-  const repUsers = users.filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || u.role === "sales"));
+  const repUsers = users.filter((u) => visibleUserIds.includes(u.id) && (u.role === "bdr" || SELLER_ROLES.includes(u.role)));
 
   const shown = ownerFilter === "all" ? deals : deals.filter((d) => d.ownerId === ownerFilter);
 
@@ -3631,7 +3637,7 @@ function Pipeline({ deals, allDeals, saveDeals, liveUser, users, visibleUserIds,
         <div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Opportunities</h1>
           <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>
-            {role === "bdr" ? "Your deals" : role === "sales" ? "You + your BDRs" : "All deals"} · {shown.length} in view
+            {role === "bdr" ? "Your deals" : role === "sales" ? "You + your BDRs" : role === "commission" ? "Your deals" : "All deals"} · {shown.length} in view
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -3899,12 +3905,17 @@ function DealModal({ deal, onSave, onDelete, onClose, liveUser, salesReps, assig
         <Field label="Contact email (for calendar invites)"><input type="email" value={f.contactEmail || ""} onChange={(e) => setF({ ...f, contactEmail: e.target.value })} style={inputStyle} placeholder="contact@company.com" /></Field>
         {(() => {
           const lines = f.commissionLines || [];
-          const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next) * 100) / 100 }));
+          // The deal's owner determines the rep rate. Commission reps carry their
+          // own per-person rate; everyone else uses the standard 20%.
+          const ownerId = f.ownerId || (deal && deal.ownerId) || (liveUser && liveUser.id);
+          const ownerUser = (dealUsers || []).find((u) => u.id === ownerId) || liveUser;
+          const ownerRate = ownerUser && ownerUser.role === "commission" && ownerUser.commissionPct > 0 ? ownerUser.commissionPct : REP_COMMISSION_PCT;
+          const setLines = (next) => setF((prev) => ({ ...prev, commissionLines: next, value: Math.round(dealRepValue(next, ownerRate) * 100) / 100 }));
           const addLine = () => setLines([...lines, { vendor: "att", category: "new", count: "", mrc: "65" }]);
           const updateLine = (i, patch) => setLines(lines.map((l, j) => j === i ? { ...l, ...patch } : l));
           const removeLine = (i) => setLines(lines.filter((_, j) => j !== i));
           const total = dealCommissionTotal(lines);
-          const repVal = dealRepValue(lines);
+          const repVal = dealRepValue(lines, ownerRate);
           const selStyle = { ...inputStyle, marginBottom: 0, appearance: "none", cursor: "pointer", fontSize: 13 };
           return (
             <div style={{ marginBottom: 14 }}>
@@ -4280,7 +4291,7 @@ function AdminPortal({ users, saveUsers, entries, saveEntries, deals, saveDeals 
         </button>
       </div>
 
-      {["admin", "management", "sales", "bdr"].map((r) => (
+      {["admin", "management", "sales", "commission", "bdr"].map((r) => (
         <div key={r} style={{ marginBottom: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: ROLES[r].color }} />
@@ -4434,6 +4445,12 @@ function UserModal({ user, salesReps, onSave, onClose }) {
     if (!f.name.trim() || !f.email.trim()) { setErr("Name and email are required."); return; }
     if (!user && !f.password.trim()) { setErr("A password is required for a new user."); return; }
     const data = { ...f, name: f.name.trim(), email: f.email.trim() };
+    // Commission reps carry a rate; default it if left blank. Non-commission roles clear it.
+    if (data.role === "commission") {
+      data.commissionPct = (data.commissionPct === "" || data.commissionPct == null) ? DEFAULT_COMMISSION_PCT : Number(data.commissionPct);
+    } else {
+      data.commissionPct = null;
+    }
     onSave(user ? { ...data, id: user.id } : data);
   };
 
@@ -4452,6 +4469,7 @@ function UserModal({ user, salesReps, onSave, onClose }) {
             <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
               <option value="bdr">BDR</option>
               <option value="sales">Sales Rep</option>
+              <option value="commission">Senior Sales Rep</option>
               <option value="management">Management</option>
               <option value="admin">Admin</option>
             </select>
@@ -4462,6 +4480,19 @@ function UserModal({ user, salesReps, onSave, onClose }) {
           <p style={{ fontSize: 12.5, opacity: 0.55, margin: "-2px 0 14px", lineHeight: 1.5 }}>
             BDRs choose which Sales Rep they're working for each time they log activity or add a deal — no fixed assignment needed.
           </p>
+        )}
+        {f.role === "commission" && (
+          <>
+            <Field label="Commission rate (%)">
+              <input type="number" min="0" max="100" step="0.5"
+                value={f.commissionPct != null && f.commissionPct !== "" ? Math.round(f.commissionPct * 1000) / 10 : ""}
+                onChange={(e) => { const v = e.target.value; setF({ ...f, commissionPct: v === "" ? "" : Number(v) / 100 }); }}
+                style={inputStyle} placeholder="e.g. 40" />
+            </Field>
+            <p style={{ fontSize: 12.5, opacity: 0.55, margin: "-6px 0 14px", lineHeight: 1.5 }}>
+              Senior Sales Reps work independently (no BDR tagging, own data only) and earn this percentage of a deal's total commission. Enter a whole percentage, e.g. 40 for 40%.
+            </p>
+          </>
         )}
 
         {/* Password reset — only for existing non-admin users */}
