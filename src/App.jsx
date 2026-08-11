@@ -81,6 +81,13 @@ const monthLabel = (mk) => {
 };
 // True if an entry/deal date (YYYY-MM-DD) falls in the given month key.
 const inMonth = (dateStr, mk) => (dateStr || "").slice(0, 7) === mk;
+// Crash-safe date label for reports: handles empty/malformed dates gracefully.
+const fmtReportDate = (dateStr) => {
+  if (!dateStr) return "—";
+  const d = new Date(String(dateStr).slice(0, 10) + "T00:00");
+  if (isNaN(d.getTime())) return String(dateStr);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
 
 // Pipeline stages: ordered flow with per-stage color and a default win-probability
 // used for the weighted forecast. Closed Won/Lost are terminal.
@@ -2080,6 +2087,7 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
         <p style={{ fontSize: 14, opacity: 0.6, margin: "4px 0 0" }}>Trends over time and rep comparison, across everything you can see.</p>
       </div>
 
+      <ErrorCatch msg="The AT&T report hit an error. Try a different rep or date range, or use the thumbs-down to report it.">
       <Panel title="AT&T activity report" icon={FileSpreadsheet}>
         <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 14px" }}>
           Select one or more AT&T reps to pull every activity Tellemica has logged for them. Shareable with AT&T — shows outreach only, no commission or deal-value data.
@@ -2145,9 +2153,9 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {attRows.map((e) => (
-                    <tr key={e.id} style={{ borderBottom: `1px solid ${LINE_C}` }}>
-                      <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{new Date(e.date + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                  {attRows.map((e, idx) => (
+                    <tr key={e.id || idx} style={{ borderBottom: `1px solid ${LINE_C}` }}>
+                      <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{fmtReportDate(e.date)}</td>
                       <td style={{ padding: "9px 12px" }}>{e.carrierRep}</td>
                       <td style={{ padding: "9px 12px" }}>{e.company || "—"}</td>
                       <td style={{ padding: "9px 12px" }}>{nameOf(e.userId)}</td>
@@ -2170,6 +2178,7 @@ function ReportsView({ entries, deals, users, liveUser, visibleUserIds }) {
           </>
         )}
       </Panel>
+      </ErrorCatch>
 
       <Panel title="Activity over time" icon={TrendingUp}>
         {!hasActivity ? <Empty msg="No activity recorded yet." /> : (
@@ -4727,6 +4736,18 @@ function Field({ label, children }) {
 }
 function Empty({ msg }) {
   return <div style={{ textAlign: "center", padding: "30px 10px", opacity: 0.4, fontSize: 14 }}>{msg}</div>;
+}
+
+// Lightweight error boundary — keeps one broken section from blanking the page.
+class ErrorCatch extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  render() {
+    if (this.state.err) {
+      return <div style={{ padding: 20, textAlign: "center", fontSize: 13.5, color: "#8A6D3B", background: "#FBF3E2", borderRadius: 10 }}>{this.props.msg || "Something went wrong loading this section."}</div>;
+    }
+    return this.props.children;
+  }
 }
 
 const inputStyle = { width: "100%", padding: "10px 12px", border: `1px solid ${LINE_C}`, borderRadius: 9, fontSize: 14, color: INK, background: CARD, outline: "none" };
