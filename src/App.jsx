@@ -651,7 +651,7 @@ export default function App() {
             onOpenCompany={(id, name) => id ? openCompanyById(id) : openCompanyByName(name)} />
         )}
         {view === "log" && canLog && (
-          <LogView liveUser={effectiveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} visibleUserIds={visibleUserIds} />
+          <LogView liveUser={effectiveUser} entries={entries} saveEntries={saveEntries} users={users} allEntries={visibleEntries} allEntriesUnscoped={entries} visibleUserIds={visibleUserIds} />
         )}
         {view === "pipeline" && (
           <Pipeline deals={visibleDeals} allDeals={deals} saveDeals={saveDeals}
@@ -3283,7 +3283,7 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
   );
 }
 
-function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUserIds }) {
+function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntriesUnscoped, visibleUserIds }) {
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
@@ -3355,15 +3355,31 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
   // History for the account currently typed in the Company field: if the name
   // exactly matches a company that has prior activity, gather those sessions so
   // the rep sees the account's history alongside the form.
+  const nameOf = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
+
   const accountHistory = useMemo(() => {
     const name = form.company.trim().toLowerCase();
     if (name.length < 2) return null;
-    const rows = (allEntries || entries).filter((e) => (e.company || "").trim().toLowerCase() === name);
+    // Use the UNSCOPED entries here so a rep is warned about an account that
+    // someone ELSE is already working — this is the dedup cross-visibility,
+    // scoped to the Log Activity screen and the typed account only.
+    const source = allEntriesUnscoped || allEntries || entries;
+    const rows = source.filter((e) => (e.company || "").trim().toLowerCase() === name);
     if (rows.length === 0) return null;
     rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     const totals = rows.reduce((t, e) => ({ calls: t.calls + (e.calls || 0), emails: t.emails + (e.emails || 0), appts: t.appts + (e.appts || 0) }), { calls: 0, emails: 0, appts: 0 });
-    return { name: rows[0].company, rows, totals, lastDate: rows[0].date };
-  }, [form.company, allEntries, entries]);
+    // Who's touched this account (the logger and any tagged rep), excluding the
+    // current user — used to decide whether to show the "already worked" warning.
+    const others = new Set();
+    rows.forEach((e) => {
+      if (e.userId && e.userId !== liveUser.id) others.add(e.userId);
+      if (e.taggedRepId && e.taggedRepId !== liveUser.id) others.add(e.taggedRepId);
+    });
+    const ownedByOthers = others.size > 0;
+    const otherNames = [...others].map(nameOf).filter(Boolean);
+    const hasAppt = rows.some((e) => (e.appts || 0) > 0);
+    return { name: rows[0].company, rows, totals, lastDate: rows[0].date, ownedByOthers, otherNames, hasAppt };
+  }, [form.company, allEntriesUnscoped, allEntries, entries, users, liveUser.id]);
 
   // If the typed company matches a known account (even without clicking a
   // suggestion) and the sales-rep field is still empty, pre-fill it from the
@@ -3495,6 +3511,21 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, visibleUse
             )}
           </div>
         </Field>
+        {accountHistory && accountHistory.ownedByOthers && (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#FDECEA", border: "1px solid #F3B7B0", borderLeft: "4px solid #C0392B", borderRadius: 10, padding: "11px 14px", marginBottom: 14 }}>
+            <AlertTriangle size={18} color="#C0392B" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#8E2A20" }}>
+                Heads up — this account is already being worked{accountHistory.hasAppt ? " (appointment on file)" : ""}.
+              </div>
+              <div style={{ fontSize: 12.5, color: "#8E2A20", opacity: 0.9, marginTop: 2 }}>
+                {accountHistory.otherNames.length > 0
+                  ? <>Active with <strong>{accountHistory.otherNames.join(", ")}</strong>. Last activity {new Date(accountHistory.lastDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. Check the history on the right and coordinate before reaching out to avoid double-touching this prospect.</>
+                  : <>This account already has activity logged. Check the history on the right before reaching out.</>}
+              </div>
+            </div>
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="BAN"><input value={form.ban} onChange={(e) => setForm({ ...form, ban: e.target.value })} style={inputStyle} placeholder="Billing account #" /></Field>
           <Field label="FAN"><input value={form.fan} onChange={(e) => setForm({ ...form, fan: e.target.value })} style={inputStyle} placeholder="Foundation account #" /></Field>
