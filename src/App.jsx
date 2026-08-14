@@ -1925,9 +1925,10 @@ function ActivityEditModal({ entry, users, onSave, onClose, busy }) {
     date: entry.date || "", calls: entry.calls ?? 0, emails: entry.emails ?? 0, appts: entry.appts ?? 0,
     company: entry.company || "", ban: entry.ban || "", fan: entry.fan || "", contact: entry.contact || "",
     phone: entry.phone || "", email: entry.email || "", carrierRep: entry.carrierRep || "",
-    taggedRepId: entry.taggedRepId || "", notes: entry.notes || "",
+    taggedRepId: entry.taggedRepId || "", bdrId: entry.bdrId || "", notes: entry.notes || "",
   });
   const reps = (users || []).filter((u) => u.role === "sales");
+  const bdrList = (users || []).filter((u) => u.role === "bdr");
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(18,33,30,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 70 }}>
@@ -1948,6 +1949,15 @@ function ActivityEditModal({ entry, users, onSave, onClose, busy }) {
             </div>
           </Field>
         </div>
+        <Field label="BDR Rep">
+          <div style={{ position: "relative" }}>
+            <select value={f.bdrId} onChange={(e) => set("bdrId", e.target.value)} style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+              <option value="">None</option>
+              {bdrList.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+          </div>
+        </Field>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="Calls"><input type="number" min="0" value={f.calls} onChange={(e) => set("calls", e.target.value)} style={inputStyle} /></Field>
           <Field label="Emails"><input type="number" min="0" value={f.emails} onChange={(e) => set("emails", e.target.value)} style={inputStyle} /></Field>
@@ -3286,8 +3296,9 @@ function BulkUpload({ liveUser, users, saveEntries, visibleUserIds }) {
 function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntriesUnscoped, visibleUserIds }) {
   const isBDR = liveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
+  const bdrs = (users || []).filter((u) => u.role === "bdr");
   // "self" sentinel = self-generated (no rep tagged). BDRs must pick; others default to self.
-  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptTz: liveUser.timezone || "America/New_York", apptEmail: "", workingFor: isBDR ? "" : "self" });
+  const [form, setForm] = useState({ date: TODAY(), company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptTz: liveUser.timezone || "America/New_York", apptEmail: "", workingFor: isBDR ? "" : "self", bdrId: isBDR ? liveUser.id : "" });
   const [toast, setToast] = useState(false);
   const [err, setErr] = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
@@ -3378,7 +3389,18 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
     const ownedByOthers = others.size > 0;
     const otherNames = [...others].map(nameOf).filter(Boolean);
     const hasAppt = rows.some((e) => (e.appts || 0) > 0);
-    return { name: rows[0].company, rows, totals, lastDate: rows[0].date, ownedByOthers, otherNames, hasAppt };
+    // Has the CURRENT user worked this account themselves before? (drives the
+    // friendly green "you've worked this" note vs the red "someone else" warning)
+    const workedByMe = rows.some((e) => e.userId === liveUser.id || e.taggedRepId === liveUser.id);
+    // Prior BDR on this account (newest first): prefer an explicit bdr_id, else
+    // fall back to a logger who is a BDR — for pre-filling the BDR field.
+    let priorBdrId = "";
+    for (const e of rows) {
+      if (e.bdrId) { priorBdrId = e.bdrId; break; }
+      const logger = (users || []).find((u) => u.id === e.userId);
+      if (logger && logger.role === "bdr") { priorBdrId = e.userId; break; }
+    }
+    return { name: rows[0].company, rows, totals, lastDate: rows[0].date, ownedByOthers, otherNames, hasAppt, workedByMe, priorBdrId };
   }, [form.company, allEntriesUnscoped, allEntries, entries, users, liveUser.id]);
 
   // If the typed company matches a known account (even without clicking a
@@ -3393,6 +3415,15 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
       setForm((f) => (f.workingFor ? f : { ...f, workingFor: match.taggedRepId }));
     }
   }, [form.company, companyIndex]); // eslint-disable-line
+
+  // Auto-fill the BDR field from this account's prior BDR history, when the
+  // field is still empty. A logged-in BDR already defaults to themselves.
+  useEffect(() => {
+    if (form.bdrId) return;
+    if (accountHistory && accountHistory.priorBdrId && bdrs.some((b) => b.id === accountHistory.priorBdrId)) {
+      setForm((f) => (f.bdrId ? f : { ...f, bdrId: accountHistory.priorBdrId }));
+    }
+  }, [accountHistory]); // eslint-disable-line
 
   const pickCompany = (c) => {
     // Reuse known details for this company, but let the user override any field.
@@ -3420,6 +3451,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
       calls: +form.calls || 0, emails: +form.emails || 0, appts: +form.appts || 0, notes: form.notes.trim(),
       carrierRep: form.carrierRep.trim(),
       taggedRepId,
+      bdrId: form.bdrId || null,
     }));
     // Any logged appointment generates an opportunity. Date/time is optional —
     // if provided, it's attached; if not, the rep can add it on the deal later.
@@ -3443,7 +3475,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
         }
       } catch (e) { /* best-effort; activity already saved */ }
     }
-    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "" });
+    setForm({ ...form, company: "", ban: "", fan: "", contact: "", phone: "", phoneExt: "", email: "", calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "", apptEmail: "", bdrId: isBDR ? liveUser.id : "" });
     setExtraContacts([]);
     setToast(true); setTimeout(() => setToast(false), 1800);
   };
@@ -3491,6 +3523,16 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
             </div>
           </Field>
         )}
+        <Field label={isBDR ? "BDR Rep" : "BDR Rep (optional)"}>
+          <div style={{ position: "relative" }}>
+            <select value={form.bdrId || ""} onChange={(e) => setForm({ ...form, bdrId: e.target.value })}
+              style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
+              <option value="">{isBDR ? "Choose a BDR…" : "No BDR involved"}</option>
+              {bdrs.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+          </div>
+        </Field>
         <Field label="Company name *">
           <div style={{ position: "relative" }}>
             <input value={form.company} autoComplete="off"
@@ -3522,6 +3564,19 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
                 {accountHistory.otherNames.length > 0
                   ? <>Active with <strong>{accountHistory.otherNames.join(", ")}</strong>. Last activity {new Date(accountHistory.lastDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. Check the history on the right and coordinate before reaching out to avoid double-touching this prospect.</>
                   : <>This account already has activity logged. Check the history on the right before reaching out.</>}
+              </div>
+            </div>
+          </div>
+        )}
+        {accountHistory && !accountHistory.ownedByOthers && accountHistory.workedByMe && (
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#E7F6EC", border: "1px solid #B7E0C4", borderLeft: "4px solid #1E9E52", borderRadius: 10, padding: "11px 14px", marginBottom: 14 }}>
+            <CheckCircle2 size={18} color="#1E9E52" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#1B7A41" }}>
+                Good news — you've worked this account before.
+              </div>
+              <div style={{ fontSize: 12.5, color: "#1B7A41", opacity: 0.9, marginTop: 2 }}>
+                Last activity {new Date(accountHistory.lastDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. Your prior notes and activity are on the right for reference.
               </div>
             </div>
           </div>
@@ -3703,7 +3758,7 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
                     </div>
                   </div>
                   <div style={{ fontSize: 11.5, opacity: 0.5, marginTop: 2 }}>
-                    {repName(e.userId) || "Someone"}{e.contact ? ` · ${e.contact}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
+                    {repName(e.userId) || "Someone"}{e.bdrId && e.bdrId !== e.userId ? ` · BDR: ${repName(e.bdrId) || "?"}` : ""}{e.contact ? ` · ${e.contact}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
                   </div>
                   {e.notes && <div style={{ fontSize: 12, opacity: 0.6, marginTop: 3 }}>{e.notes}</div>}
                 </div>
