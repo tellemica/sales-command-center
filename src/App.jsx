@@ -3379,19 +3379,23 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
     if (rows.length === 0) return null;
     rows.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     const totals = rows.reduce((t, e) => ({ calls: t.calls + (e.calls || 0), emails: t.emails + (e.emails || 0), appts: t.appts + (e.appts || 0) }), { calls: 0, emails: 0, appts: 0 });
-    // Who's touched this account (the logger and any tagged rep), excluding the
-    // current user — used to decide whether to show the "already worked" warning.
+    // "Worked by me" = the current user actually logged it, OR it was tagged to
+    // them as the sales rep. This takes priority — your own account is never a conflict.
+    const workedByMe = rows.some((e) => e.userId === liveUser.id || e.taggedRepId === liveUser.id);
+    // "Owned by others" = a DIFFERENT person actually did outreach on this account
+    // (a different logger, or a different tagged rep on activity that isn't yours).
+    // A sales rep you tagged on YOUR OWN activity is you working for them — not a
+    // competing rep — so we only count reps from rows the current user didn't log.
     const others = new Set();
     rows.forEach((e) => {
+      const mine = e.userId === liveUser.id || e.taggedRepId === liveUser.id;
+      if (mine) return; // your own activity never counts as someone else working it
       if (e.userId && e.userId !== liveUser.id) others.add(e.userId);
       if (e.taggedRepId && e.taggedRepId !== liveUser.id) others.add(e.taggedRepId);
     });
     const ownedByOthers = others.size > 0;
     const otherNames = [...others].map(nameOf).filter(Boolean);
     const hasAppt = rows.some((e) => (e.appts || 0) > 0);
-    // Has the CURRENT user worked this account themselves before? (drives the
-    // friendly green "you've worked this" note vs the red "someone else" warning)
-    const workedByMe = rows.some((e) => e.userId === liveUser.id || e.taggedRepId === liveUser.id);
     // Prior BDR on this account (newest first): prefer an explicit bdr_id, else
     // fall back to a logger who is a BDR — for pre-filling the BDR field.
     let priorBdrId = "";
