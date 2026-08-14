@@ -3463,7 +3463,12 @@ function LogView({ liveUser, entries, saveEntries, users, allEntries, allEntries
           contactEmail: form.email.trim(), apptAt: start ? start.toISOString() : null,
           ownerId: taggedRepId || liveUser.id, taggedRepId,
         });
-      } catch (e) { /* deal creation is best-effort; activity already saved */ }
+      } catch (e) {
+        // Surface the real reason the opportunity wasn't created (was silently
+        // swallowed before, which hid RLS/DB errors). Activity itself is saved.
+        console.error("upsertAppointmentDeal failed:", e);
+        setErr("Activity saved, but the opportunity couldn't be created: " + (e?.message || e) + " (activity was still logged)");
+      }
     }
     // Save any additional company contacts entered on this activity.
     const validExtra = extraContacts.filter((c) => c.name.trim() || c.email.trim() || c.phone.trim());
