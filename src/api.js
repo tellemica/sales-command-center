@@ -291,7 +291,7 @@ export async function upsertAppointmentDeal({ company, contact, contactEmail, ap
     if (contactEmail) patch.contact_email = contactEmail;
     if (contact && !found.contact) patch.contact = contact;
     const { data, error } = await supabase.from("deals").update(patch).eq("id", found.id).select().single();
-    if (error) throw error;
+    if (error) throw new Error("deal update failed: " + error.message + (error.hint ? " | hint: " + error.hint : ""));
     return toCamelDeal(data);
   }
   // No open deal — create one in the appointment stage.
@@ -300,7 +300,7 @@ export async function upsertAppointmentDeal({ company, contact, contactEmail, ap
     stage: "appointment", apptAt: apptAt || "", stageChangedAt: new Date().toISOString(),
     ownerId, taggedRepId: taggedRepId || null,
   })).select().single();
-  if (error) throw error;
+  if (error) throw new Error("deal insert failed: " + error.message + (error.hint ? " | hint: " + error.hint : ""));
   return toCamelDeal(data);
 }
 
