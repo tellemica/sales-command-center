@@ -362,16 +362,17 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [companies, setCompanies] = useState([]);
   const [leads, setLeads] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
   const [loaded, setLoaded] = useState(false);       // finished checking session
   const [authed, setAuthed] = useState(false);       // has a valid session
 
   // Pull all data the signed-in user is allowed to see. RLS filters server-side.
   const refetch = async () => {
-    const [us, es, ds, g, ug, co, ld] = await Promise.all([
-      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(), api.listCompanies(), api.listLeads(),
+    const [us, es, ds, g, ug, co, ld, cm] = await Promise.all([
+      api.listProfiles(), api.listEntries(), api.listDeals(), api.getGoals(), api.listUserGoals(), api.listCompanies(), api.listLeads(), api.listCampaigns(),
     ]);
-    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug); setCompanies(co); setLeads(ld);
+    setUsers(us); setEntries(es); setDeals(ds); setUserGoals(ug); setCompanies(co); setLeads(ld); setCampaigns(cm);
     setGoals({ calls: g.calls, emails: g.emails, appts: g.appts });
   };
 
@@ -696,6 +697,7 @@ export default function App() {
         {view === "leads" && (
           <LeadsView
             leads={leads}
+            campaigns={campaigns}
             users={users}
             effectiveUser={effectiveUser}
             visibleUserIds={visibleUserIds}
@@ -877,22 +879,31 @@ const LEAD_STATUS_META = {
   dead:      { label: "Dead",      color: "#8494A6", bg: "#EEF1F4" },
 };
 
-function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
+function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
   const role = effectiveUser.role;
   const canManageAll = role === "admin" || role === "management";
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [campaignFilter, setCampaignFilter] = useState("all");
   const [showUpload, setShowUpload] = useState(false);
+  const [showCampaigns, setShowCampaigns] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [selected, setSelected] = useState(() => new Set()); // bulk-selected lead ids
   const [busy, setBusy] = useState("");
 
   // People a lead can be assigned to = BDRs + Sales Reps in scope.
   const assignable = users.filter((u) => (u.role === "bdr" || SELLER_ROLES.includes(u.role)) && (canManageAll || visibleUserIds.includes(u.id)));
   const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+  const campName = (id) => { const c = (campaigns || []).find((x) => x.id === id); return c ? c.name : ""; };
 
   const filtered = leads.filter((l) => {
     if (q && !(`${l.company} ${l.contact} ${l.email}`.toLowerCase().includes(q.trim().toLowerCase()))) return false;
     if (statusFilter !== "all" && l.status !== statusFilter) return false;
+    if (campaignFilter !== "all") {
+      if (campaignFilter === "none" && l.campaignId) return false;
+      if (campaignFilter !== "none" && l.campaignId !== campaignFilter) return false;
+    }
     if (assigneeFilter !== "all") {
       if (assigneeFilter === "unassigned" && l.assignedTo) return false;
       if (assigneeFilter !== "unassigned" && l.assignedTo !== assigneeFilter) return false;
@@ -902,7 +913,29 @@ function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpe
 
   const setStatus = async (lead, status) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { status }); await refetch(); } finally { setBusy(""); } };
   const setAssignee = async (lead, assignedTo) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { assignedTo }); await refetch(); } finally { setBusy(""); } };
+  const setCampaign = async (lead, campaignId) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { campaignId }); await refetch(); } finally { setBusy(""); } };
   const del = async (lead) => { if (confirm(`Delete lead "${lead.company}"?`)) { await api.deleteLead(lead.id); await refetch(); } };
+
+  // ---- Bulk selection ----
+  const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allShownSelected = filtered.length > 0 && filtered.every((l) => selected.has(l.id));
+  const toggleAllShown = () => setSelected((prev) => {
+    const n = new Set(prev);
+    if (allShownSelected) filtered.forEach((l) => n.delete(l.id));
+    else filtered.forEach((l) => n.add(l.id));
+    return n;
+  });
+  const clearSelection = () => setSelected(new Set());
+  const bulkAssign = async (assignedTo) => {
+    if (selected.size === 0) return;
+    setBusy(`Assigning ${selected.size}…`);
+    try { await api.bulkUpdateLeads([...selected], { assignedTo }); await refetch(); clearSelection(); } finally { setBusy(""); }
+  };
+  const bulkCampaign = async (campaignId) => {
+    if (selected.size === 0) return;
+    setBusy(`Updating ${selected.size}…`);
+    try { await api.bulkUpdateLeads([...selected], { campaignId }); await refetch(); clearSelection(); } finally { setBusy(""); }
+  };
 
   // status counts for the summary chips
   const counts = LEAD_STATUSES.reduce((a, s) => ({ ...a, [s]: leads.filter((l) => l.status === s).length }), {});
@@ -916,10 +949,24 @@ function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpe
             {filtered.length} {filtered.length === 1 ? "lead" : "leads"}{canManageAll ? "" : " assigned to you"}. {busy && <b style={{ color: CALL }}>{busy}</b>}
           </p>
         </div>
-        <button onClick={() => setShowUpload(true)} className="tap"
-          style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-          <FileSpreadsheet size={15} /> Upload leads
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {canManageAll && (
+            <button onClick={() => setShowReport(true)} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+              <TrendingUp size={15} /> Campaign report
+            </button>
+          )}
+          {canManageAll && (
+            <button onClick={() => setShowCampaigns(true)} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+              <Target size={15} /> Campaigns
+            </button>
+          )}
+          <button onClick={() => setShowUpload(true)} className="tap"
+            style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+            <FileSpreadsheet size={15} /> Upload leads
+          </button>
+        </div>
       </div>
 
       {/* Status summary chips */}
@@ -946,29 +993,86 @@ function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpe
             <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
           </div>
         )}
+        <div style={{ position: "relative" }}>
+          <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)}
+            style={{ appearance: "none", background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 34px 10px 14px", fontSize: 14, cursor: "pointer" }}>
+            <option value="all">All campaigns</option>
+            <option value="none">No campaign</option>
+            {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+        </div>
       </div>
+
+      {canManageAll && selected.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, background: INK, color: PAPER, borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>{selected.size} selected</span>
+          <div style={{ position: "relative" }}>
+            <select defaultValue="" onChange={(e) => { if (e.target.value) { bulkAssign(e.target.value === "__none__" ? "" : e.target.value); e.target.value = ""; } }}
+              style={{ appearance: "none", background: "#fff", color: INK, border: "none", borderRadius: 8, padding: "7px 28px 7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <option value="" disabled>Assign to…</option>
+              <option value="__none__">Unassign</option>
+              {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <ChevronDown size={13} style={{ position: "absolute", right: 9, top: 10, pointerEvents: "none", opacity: 0.5, color: INK }} />
+          </div>
+          <div style={{ position: "relative" }}>
+            <select defaultValue="" onChange={(e) => { if (e.target.value) { bulkCampaign(e.target.value === "__none__" ? "" : e.target.value); e.target.value = ""; } }}
+              style={{ appearance: "none", background: "#fff", color: INK, border: "none", borderRadius: 8, padding: "7px 28px 7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <option value="" disabled>Set campaign…</option>
+              <option value="__none__">Remove from campaign</option>
+              {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <ChevronDown size={13} style={{ position: "absolute", right: 9, top: 10, pointerEvents: "none", opacity: 0.5, color: INK }} />
+          </div>
+          <button onClick={clearSelection} className="tap" style={{ background: "transparent", border: "none", color: PAPER, fontSize: 12.5, fontWeight: 600, cursor: "pointer", opacity: 0.8 }}>Clear</button>
+        </div>
+      )}
 
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
-                {["Company", "Contact", "Phone", "Email", "Status", "Assigned to", ""].map((h) => (
+                {canManageAll && (
+                  <th style={{ padding: "11px 14px", width: 36 }}>
+                    <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} style={{ cursor: "pointer" }} />
+                  </th>
+                )}
+                {["Company", "Contact", "Phone", "Campaign", "Status", "Assigned to", ""].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</td></tr>
+                <tr><td colSpan={canManageAll ? 8 : 7} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</td></tr>
               ) : filtered.map((l) => (
-                <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}`, background: selected.has(l.id) ? "#EEF5FF" : "transparent" }}>
+                  {canManageAll && (
+                    <td style={{ padding: "10px 14px" }}>
+                      <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer" }} />
+                    </td>
+                  )}
                   <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>
                     <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{l.company}</button>
                   </td>
                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.contact || "—"}</td>
                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.phone || "—"}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.email || "—"}</td>
+                  <td style={{ padding: "10px 14px" }}>
+                    {canManageAll ? (
+                      <div style={{ position: "relative" }}>
+                        <select value={l.campaignId || ""} onChange={(e) => setCampaign(l, e.target.value)}
+                          style={{ appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 26px 6px 10px", fontSize: 13, cursor: "pointer", maxWidth: 160 }}>
+                          <option value="">—</option>
+                          {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <ChevronDown size={13} style={{ position: "absolute", right: 8, top: 9, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 13 }}>{campName(l.campaignId) || "—"}</span>
+                    )}
+                  </td>
                   <td style={{ padding: "10px 14px" }}>
                     <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
                       style={{ appearance: "none", border: "none", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg }}>
@@ -1001,31 +1105,304 @@ function LeadsView({ leads, users, effectiveUser, visibleUserIds, refetch, onOpe
         </div>
       </div>
 
-      {showUpload && <LeadUpload users={users} assignable={assignable} refetch={refetch} onClose={() => setShowUpload(false)} />}
+      {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} refetch={refetch} onClose={() => setShowUpload(false)} />}
+      {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
+      {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} onClose={() => setShowReport(false)} />}
     </>
   );
 }
 
-function LeadUpload({ users, assignable, refetch, onClose }) {
+// ---- Campaign manager (create / rename / delete campaigns) ----
+function CampaignManager({ campaigns, leads, refetch, onClose }) {
+  const [name, setName] = useState("");
+  const [vendor, setVendor] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const leadCount = (id) => leads.filter((l) => l.campaignId === id).length;
+
+  const create = async () => {
+    if (!name.trim()) { setErr("Give the campaign a name."); return; }
+    setBusy("Creating…"); setErr("");
+    try { await api.createCampaign({ name: name.trim(), vendor: vendor.trim() }); setName(""); setVendor(""); await refetch(); }
+    catch (e) { setErr(e?.message || "Could not create campaign."); }
+    finally { setBusy(""); }
+  };
+  const rename = async (c) => {
+    const nn = prompt("Rename campaign:", c.name); if (nn == null) return;
+    if (!nn.trim()) return;
+    setBusy("Saving…"); try { await api.updateCampaign(c.id, { name: nn.trim() }); await refetch(); } finally { setBusy(""); }
+  };
+  const remove = async (c) => {
+    const n = leadCount(c.id);
+    if (!confirm(`Delete campaign "${c.name}"?${n ? ` ${n} lead${n === 1 ? "" : "s"} will be un-categorized (leads are NOT deleted).` : ""}`)) return;
+    setBusy("Deleting…"); try { await api.deleteCampaign(c.id); await refetch(); } finally { setBusy(""); }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD, borderRadius: 16, padding: 24, width: "min(640px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: 0 }}>Campaigns</h3>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5 }}><X size={20} /></button>
+        </div>
+      <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 16px" }}>Create named campaigns to group your leads, then assign leads to them. Deleting a campaign never deletes its leads.</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 18 }}>
+        <div style={{ flex: "1 1 220px" }}>
+          <div style={lblStyle}>Campaign name</div>
+          <input value={name} onChange={(e) => { setName(e.target.value); setErr(""); }} style={{ ...inputStyle, marginBottom: 0 }} placeholder="e.g. AT&T Q3 Fiber Push" />
+        </div>
+        <div style={{ flex: "0 1 160px" }}>
+          <div style={lblStyle}>Vendor (optional)</div>
+          <input value={vendor} onChange={(e) => setVendor(e.target.value)} style={{ ...inputStyle, marginBottom: 0 }} placeholder="AT&T" />
+        </div>
+        <button onClick={create} disabled={!!busy} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "11px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Add</button>
+      </div>
+      {err && <p style={{ color: "#B4453F", fontSize: 13, margin: "0 0 12px" }}>{err}</p>}
+      {busy && <p style={{ color: CALL, fontSize: 13, margin: "0 0 12px" }}>{busy}</p>}
+      {(campaigns || []).length === 0 ? (
+        <Empty msg="No campaigns yet — add your first above." />
+      ) : (
+        <div style={{ border: `1px solid ${LINE_C}`, borderRadius: 10, overflow: "hidden" }}>
+          {campaigns.map((c) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 14px", borderTop: `1px solid ${LINE_C}` }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}{c.vendor ? <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.5 }}> · {c.vendor}</span> : ""}</div>
+                <div style={{ fontSize: 12, opacity: 0.5 }}>{leadCount(c.id)} lead{leadCount(c.id) === 1 ? "" : "s"}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => rename(c)} className="tap" style={iconBtn} title="Rename"><Pencil size={14} /></button>
+                <button onClick={() => remove(c)} className="tap" style={iconBtn} title="Delete"><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Campaign report (progress per campaign, exportable for vendors) ----
+function CampaignReport({ campaigns, leads, users, onClose }) {
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+  const [drill, setDrill] = useState(null); // { id, name, vendor } of campaign being drilled into (or "none")
+  // Build per-campaign rollups. "converted" leads count as wins.
+  const rows = (campaigns || []).map((c) => {
+    const cl = leads.filter((l) => l.campaignId === c.id);
+    const by = (s) => cl.filter((l) => l.status === s).length;
+    const assigned = cl.filter((l) => l.assignedTo).length;
+    return {
+      id: c.id, campaign: c.name, vendor: c.vendor || "",
+      total: cl.length, assigned, unassigned: cl.length - assigned,
+      newC: by("new"), contacted: by("contacted"), qualified: by("qualified"), converted: by("converted"), dead: by("dead"),
+      convRate: cl.length ? Math.round((by("converted") / cl.length) * 100) : 0,
+    };
+  });
+  // Also account for leads with no campaign, so totals reconcile.
+  const noCamp = leads.filter((l) => !l.campaignId);
+  if (noCamp.length) {
+    const by = (s) => noCamp.filter((l) => l.status === s).length;
+    const assigned = noCamp.filter((l) => l.assignedTo).length;
+    rows.push({ id: "none", campaign: "(No campaign)", vendor: "", total: noCamp.length, assigned, unassigned: noCamp.length - assigned,
+      newC: by("new"), contacted: by("contacted"), qualified: by("qualified"), converted: by("converted"), dead: by("dead"),
+      convRate: noCamp.length ? Math.round((by("converted") / noCamp.length) * 100) : 0 });
+  }
+
+  // Leads for the drilled-into campaign ("none" = uncategorized).
+  const drillLeads = drill ? leads.filter((l) => drill.id === "none" ? !l.campaignId : l.campaignId === drill.id) : [];
+  // Rep-level breakdown within the drilled campaign.
+  const drillByRep = (() => {
+    if (!drill) return [];
+    const map = new Map();
+    drillLeads.forEach((l) => {
+      const key = l.assignedTo || "__un";
+      if (!map.has(key)) map.set(key, { rep: key === "__un" ? "Unassigned" : (nameOf(l.assignedTo) || "Unknown"), total: 0, converted: 0, qualified: 0, contacted: 0, newC: 0, dead: 0 });
+      const r = map.get(key);
+      r.total++;
+      if (l.status === "converted") r.converted++;
+      else if (l.status === "qualified") r.qualified++;
+      else if (l.status === "contacted") r.contacted++;
+      else if (l.status === "new") r.newC++;
+      else if (l.status === "dead") r.dead++;
+    });
+    return [...map.values()].sort((a, b) => b.total - a.total);
+  })();
+
+  const exportXlsx = () => {
+    const data = rows.map((r) => ({
+      Campaign: r.campaign, Vendor: r.vendor, "Total leads": r.total,
+      Assigned: r.assigned, Unassigned: r.unassigned,
+      New: r.newC, Contacted: r.contacted, Qualified: r.qualified, Converted: r.converted, Dead: r.dead,
+      "Conversion %": r.convRate,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 26 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 11 }, { wch: 7 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 7 }, { wch: 13 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Campaign progress");
+    XLSX.writeFile(wb, `tellemica-campaign-report-${CURRENT_MONTH}.xlsx`);
+  };
+
+  const exportDrill = () => {
+    if (!drill) return;
+    const data = drillLeads.map((l) => ({
+      Company: l.company, Contact: l.contact || "", Phone: l.phone || "", Email: l.email || "",
+      Status: (LEAD_STATUS_META[l.status] || {}).label || l.status,
+      "Assigned to": nameOf(l.assignedTo) || "Unassigned",
+      Notes: l.notes || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{ wch: 26 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 12 }, { wch: 18 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    // Second sheet: rep breakdown
+    const repData = drillByRep.map((r) => ({ Rep: r.rep, "Total leads": r.total, New: r.newC, Contacted: r.contacted, Qualified: r.qualified, Converted: r.converted, Dead: r.dead }));
+    const ws2 = XLSX.utils.json_to_sheet(repData);
+    ws2["!cols"] = [{ wch: 20 }, { wch: 11 }, { wch: 7 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws2, "By rep");
+    const safe = drill.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    XLSX.writeFile(wb, `tellemica-campaign-${safe}-${CURRENT_MONTH}.xlsx`);
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: CARD, borderRadius: 16, padding: 24, width: "min(920px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: 0 }}>Campaign report</h3>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5 }}><X size={20} /></button>
+        </div>
+      {drill ? (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
+            <button onClick={() => setDrill(null)} className="tap" style={{ display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: EMAIL, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0 }}>
+              <ChevronLeft size={15} /> All campaigns
+            </button>
+            <button onClick={exportDrill} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+              <Download size={15} /> Export this campaign
+            </button>
+          </div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "6px 0 2px" }}>{drill.name}{drill.vendor ? <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.5 }}> · {drill.vendor}</span> : ""}</h2>
+          <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 16px" }}>{drillLeads.length} lead{drillLeads.length === 1 ? "" : "s"} in this campaign.</p>
+
+          {/* Rep-level breakdown */}
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>By rep</div>
+          <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10, marginBottom: 20 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  {["Rep", "Total", "New", "Contacted", "Qualified", "Converted", "Dead"].map((h) => (
+                    <th key={h} style={{ textAlign: h === "Rep" ? "left" : "center", padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {drillByRep.map((r, i) => (
+                  <tr key={i} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                    <td style={{ padding: "9px 12px", fontWeight: 600 }}>{r.rep}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.total}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.newC}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.contacted}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.qualified}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 700, color: "#1B7A41" }}>{r.converted}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center", opacity: 0.6 }}>{r.dead}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Lead list */}
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>Leads</div>
+          <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#F1F5F9" }}>
+                  {["Company", "Contact", "Phone", "Status", "Assigned to"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "9px 12px", fontSize: 11.5, fontWeight: 700, color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {drillLeads.length === 0 ? (
+                  <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", opacity: 0.5 }}>No leads in this campaign.</td></tr>
+                ) : drillLeads.map((l) => (
+                  <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}` }}>
+                    <td style={{ padding: "9px 12px", fontWeight: 600 }}>{l.company}</td>
+                    <td style={{ padding: "9px 12px" }}>{l.contact || "—"}</td>
+                    <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>{l.phone || "—"}</td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, borderRadius: 20, padding: "3px 10px", color: (LEAD_STATUS_META[l.status] || {}).color, background: (LEAD_STATUS_META[l.status] || {}).bg }}>{(LEAD_STATUS_META[l.status] || {}).label || l.status}</span>
+                    </td>
+                    <td style={{ padding: "9px 12px" }}>{nameOf(l.assignedTo) || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (<>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <p style={{ fontSize: 13, opacity: 0.6, margin: 0 }}>Progress by campaign — share with your vendors. Conversions = leads marked “converted”. Click a campaign to drill in.</p>
+        <button onClick={exportXlsx} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+          <Download size={15} /> Export to Excel
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <Empty msg="No campaigns or leads to report on yet." />
+      ) : (
+        <div style={{ overflowX: "auto", border: `1px solid ${LINE_C}`, borderRadius: 10 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: "#F1F5F9" }}>
+                {["Campaign", "Total", "Assigned", "New", "Contacted", "Qualified", "Converted", "Dead", "Conv. %"].map((h) => (
+                  <th key={h} style={{ textAlign: h === "Campaign" ? "left" : "center", padding: "10px 12px", fontSize: 11.5, fontWeight: 700, color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} onClick={() => setDrill({ id: r.id, name: r.campaign, vendor: r.vendor })} className="tap" style={{ borderTop: `1px solid ${LINE_C}`, cursor: "pointer" }}>
+                  <td style={{ padding: "9px 12px", fontWeight: 600, color: EMAIL }}>{r.campaign}{r.vendor ? <span style={{ fontSize: 11.5, fontWeight: 500, opacity: 0.5, color: INK }}> · {r.vendor}</span> : ""}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.total}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.assigned}<span style={{ opacity: 0.4 }}>/{r.total}</span></td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.newC}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.contacted}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center" }}>{r.qualified}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 700, color: "#1B7A41" }}>{r.converted}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center", opacity: 0.6 }}>{r.dead}</td>
+                  <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>{r.convRate}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      </>)}
+      </div>
+    </div>
+  );
+}
+
+function LeadUpload({ users, assignable, campaigns, refetch, onClose }) {
   const [rows, setRows] = useState(null);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
   const fileRef = React.useRef(null);
-  const COLS = ["Company", "Contact", "Phone", "Email", "BAN", "FAN", "Assign To", "Status", "Notes"];
+  const COLS = ["Company", "Contact", "Phone", "Email", "BAN", "FAN", "Assign To", "Campaign", "Status", "Notes"];
 
   const matchUser = (name) => { const n = (name || "").trim().toLowerCase(); if (!n) return null; return assignable.find((u) => u.name.trim().toLowerCase() === n) || null; };
 
   const downloadTemplate = async () => {
-    const example = { Company: "Acme Corp", Contact: "Jane Smith", Phone: "(610) 555-0100", Email: "jane@acme.com", BAN: "123456789", FAN: "987654321", "Assign To": (assignable[0] && assignable[0].name) || "", Status: "new", Notes: "Referred by partner" };
+    const example = { Company: "Acme Corp", Contact: "Jane Smith", Phone: "(610) 555-0100", Email: "jane@acme.com", BAN: "123456789", FAN: "987654321", "Assign To": (assignable[0] && assignable[0].name) || "", Campaign: (campaigns[0] && campaigns[0].name) || "AT&T Q3 Fiber Push", Status: "new", Notes: "Referred by partner" };
     const blank = Object.fromEntries(COLS.map((c) => [c, ""]));
     const ws = XLSX.utils.json_to_sheet([example, blank], { header: COLS });
-    ws["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 34 }];
     // Lists sheet for dropdowns
     const assignOpts = assignable.map((u) => u.name);
-    const maxLen = Math.max(assignOpts.length, LEAD_STATUSES.length);
-    const listAoa = [["AssignTo", "Status"]];
-    for (let i = 0; i < maxLen; i++) listAoa.push([assignOpts[i] || "", LEAD_STATUSES[i] || ""]);
+    const campOpts = (campaigns || []).map((c) => c.name);
+    const maxLen = Math.max(assignOpts.length, LEAD_STATUSES.length, campOpts.length);
+    const listAoa = [["AssignTo", "Status", "Campaign"]];
+    for (let i = 0; i < maxLen; i++) listAoa.push([assignOpts[i] || "", LEAD_STATUSES[i] || "", campOpts[i] || ""]);
     const wsList = XLSX.utils.aoa_to_sheet(listAoa);
     const ref = [{ Column: "Assign To", "Accepted values": "(leave blank = unassigned)" }, ...assignable.map((u) => ({ Column: "Assign To", "Accepted values": `${u.name} (${ROLES[u.role].label})` })), ...LEAD_STATUSES.map((s) => ({ Column: "Status", "Accepted values": s }))];
     const wsRef = XLSX.utils.json_to_sheet(ref); wsRef["!cols"] = [{ wch: 16 }, { wch: 40 }];
@@ -1040,9 +1417,13 @@ function LeadUpload({ users, assignable, refetch, onClose }) {
       let xml = await zip.file("xl/worksheets/sheet1.xml").async("string");
       const N = 2000;
       const dvs = [
-        { sqref: `G2:G${N + 1}`, f: `Lists!$A$2:$A$${assignOpts.length + 1}` }, // Assign To
-        { sqref: `H2:H${N + 1}`, f: `Lists!$B$2:$B$${LEAD_STATUSES.length + 1}` }, // Status
+        { sqref: `G2:G${N + 1}`, f: `Lists!$A$2:$A$${assignOpts.length + 1}` }, // Assign To (col G)
+        { sqref: `I2:I${N + 1}`, f: `Lists!$B$2:$B$${LEAD_STATUSES.length + 1}` }, // Status (col I, shifted by Campaign)
       ];
+      // Campaign dropdown (col H) only if there are campaigns to list.
+      if (campaigns && campaigns.length) {
+        dvs.push({ sqref: `H2:H${N + 1}`, f: `Lists!$C$2:$C$${campaigns.length + 1}` });
+      }
       const dvXml = `<dataValidations count="${dvs.length}">` + dvs.map((d) => `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${d.f}</formula1></dataValidation>`).join("") + `</dataValidations>`;
       xml = xml.includes("</sheetData>") ? xml.replace("</sheetData>", "</sheetData>" + dvXml) : xml.replace("</worksheet>", dvXml + "</worksheet>");
       zip.file("xl/worksheets/sheet1.xml", xml);
@@ -1065,10 +1446,11 @@ function LeadUpload({ users, assignable, refetch, onClose }) {
       if (a) { const u = matchUser(a); if (!u) errors.push(`"Assign To" — no BDR/Sales Rep named "${a}"`); else assignedTo = u.id; }
       let status = String(r["Status"] || "new").trim().toLowerCase();
       if (!LEAD_STATUSES.includes(status)) { if (status) errors.push(`"Status" — "${status}" isn't valid`); status = "new"; }
+      const campaignName = String(r["Campaign"] || "").trim();
       return {
         _row: i + 2, errors, company, contact: String(r["Contact"] || "").trim(), phone: String(r["Phone"] || "").trim(),
         email: String(r["Email"] || "").trim(), ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(),
-        notes: String(r["Notes"] || "").trim(), assignedTo, status,
+        notes: String(r["Notes"] || "").trim(), assignedTo, status, campaignName,
         assigneeName: assignedTo ? (assignable.find((u) => u.id === assignedTo) || {}).name : "Unassigned",
       };
     }).filter((r) => r.company || r.errors.length);
@@ -1081,7 +1463,19 @@ function LeadUpload({ users, assignable, refetch, onClose }) {
   const doImport = async () => {
     if (!valid.length) return; setBusy(true);
     try {
-      await api.addLeadsBulk(valid.map((r) => ({ company: r.company, contact: r.contact, phone: r.phone, email: r.email, ban: r.ban, fan: r.fan, notes: r.notes, status: r.status, assignedTo: r.assignedTo })));
+      // Resolve campaign names -> ids, creating any new ones on the fly. Cache by
+      // lowercased name so we only create/lookup each distinct campaign once.
+      const campCache = {};
+      (campaigns || []).forEach((c) => { campCache[c.name.trim().toLowerCase()] = c.id; });
+      for (const r of valid) {
+        const key = (r.campaignName || "").trim().toLowerCase();
+        if (key && !campCache[key]) { campCache[key] = await api.findOrCreateCampaign(r.campaignName.trim()); }
+      }
+      await api.addLeadsBulk(valid.map((r) => ({
+        company: r.company, contact: r.contact, phone: r.phone, email: r.email, ban: r.ban, fan: r.fan,
+        notes: r.notes, status: r.status, assignedTo: r.assignedTo,
+        campaignId: r.campaignName ? campCache[r.campaignName.trim().toLowerCase()] : null,
+      })));
       await refetch(); setDone(`Imported ${valid.length} ${valid.length === 1 ? "lead" : "leads"}.`); setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
     } catch (e) { setDone("Import failed: " + (e.message || "")); } finally { setBusy(false); }
   };
