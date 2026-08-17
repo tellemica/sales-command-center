@@ -545,6 +545,7 @@ const toCamelLead = (l) => l && ({
   phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
   source: l.source || "", notes: l.notes || "", status: l.status || "New",
   assignedTo: l.assigned_to || "", createdBy: l.created_by || "", companyId: l.company_id || "",
+  campaignId: l.campaign_id || "",
   nextActionDate: l.next_action_date || "",
   createdAt: l.created_at, updatedAt: l.updated_at,
 });
@@ -554,6 +555,7 @@ const fromCamelLead = (l) => ({
   phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
   source: l.source || "", notes: l.notes || "", status: l.status || "New",
   assigned_to: l.assignedTo || null, created_by: l.createdBy || null,
+  campaign_id: l.campaignId || null,
   next_action_date: l.nextActionDate || null,
 });
 
@@ -589,9 +591,72 @@ export async function updateLead(id, patch) {
     ban:"ban", fan:"fan", source:"source", notes:"notes", status:"status" };
   Object.keys(map).forEach((k) => { if (patch[k] !== undefined) db[map[k]] = patch[k]; });
   if (patch.assignedTo !== undefined) db.assigned_to = patch.assignedTo || null;
+  if (patch.campaignId !== undefined) db.campaign_id = patch.campaignId || null;
+  if (patch.nextActionDate !== undefined) db.next_action_date = patch.nextActionDate || null;
   const { data, error } = await supabase.from("leads").update(db).eq("id", id).select().single();
   if (error) throw error;
   return toCamelLead(data);
+}
+
+// Bulk update many leads at once (used for bulk assign / bulk set-campaign).
+// `patch` accepts assignedTo, campaignId, and/or status.
+export async function bulkUpdateLeads(ids, patch) {
+  if (!ids || ids.length === 0) return [];
+  const db = {};
+  if (patch.assignedTo !== undefined) db.assigned_to = patch.assignedTo || null;
+  if (patch.campaignId !== undefined) db.campaign_id = patch.campaignId || null;
+  if (patch.status !== undefined) db.status = patch.status;
+  const { data, error } = await supabase.from("leads").update(db).in("id", ids).select();
+  if (error) throw error;
+  return (data || []).map(toCamelLead);
+}
+
+// ---- Campaigns ----
+const toCamelCampaign = (c) => c && ({ id: c.id, name: c.name, vendor: c.vendor || "", notes: c.notes || "", createdBy: c.created_by || "", createdAt: c.created_at });
+
+export async function listCampaigns() {
+  const { data, error } = await supabase.from("campaigns").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(toCamelCampaign);
+}
+
+export async function createCampaign(camp) {
+  const me = await supabase.auth.getUser();
+  const row = { name: camp.name, vendor: camp.vendor || null, notes: camp.notes || null, created_by: me?.data?.user?.id || null };
+  const { data, error } = await supabase.from("campaigns").insert(row).select().single();
+  if (error) throw error;
+  return toCamelCampaign(data);
+}
+
+export async function updateCampaign(id, patch) {
+  const db = {};
+  if (patch.name !== undefined) db.name = patch.name;
+  if (patch.vendor !== undefined) db.vendor = patch.vendor || null;
+  if (patch.notes !== undefined) db.notes = patch.notes || null;
+  const { data, error } = await supabase.from("campaigns").update(db).eq("id", id).select().single();
+  if (error) throw error;
+  return toCamelCampaign(data);
+}
+
+export async function deleteCampaign(id) {
+  // Leads keep existing but their campaign_id is cleared by the FK (set null) —
+  // we clear explicitly first so the UI updates cleanly.
+  await supabase.from("leads").update({ campaign_id: null }).eq("campaign_id", id);
+  const { error } = await supabase.from("campaigns").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// Find a campaign by (case-insensitive) name, or create it. Used by bulk upload
+// so a new campaign name in the sheet creates the campaign on the fly.
+export async function findOrCreateCampaign(name) {
+  const clean = (name || "").trim();
+  if (!clean) return null;
+  const { data: existing } = await supabase.from("campaigns").select("id,name").ilike("name", clean).limit(1);
+  if (existing && existing.length) return existing[0].id;
+  const me = await supabase.auth.getUser();
+  const { data, error } = await supabase.from("campaigns").insert({ name: clean, created_by: me?.data?.user?.id || null }).select("id").single();
+  if (error) throw error;
+  return data.id;
 }
 
 export async function deleteLead(id) {
