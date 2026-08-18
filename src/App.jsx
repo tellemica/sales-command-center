@@ -358,22 +358,44 @@ export default function App() {
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
   const VALID_VIEWS = ["dashboard", "log", "companies", "contacts", "leads", "activity", "pipeline", "followups", "reports", "goals", "admin"];
-  const viewFromHash = () => {
-    const h = (typeof window !== "undefined" ? window.location.hash : "").replace(/^#\/?/, "");
-    return VALID_VIEWS.includes(h) ? h : "dashboard";
+  // Parse the hash into { view, companyId }. Company detail is encoded as
+  // "#companies/company/<id>"; a plain tab is just "#leads", etc.
+  const parseHash = () => {
+    const raw = (typeof window !== "undefined" ? window.location.hash : "").replace(/^#\/?/, "");
+    const parts = raw.split("/");
+    const v = VALID_VIEWS.includes(parts[0]) ? parts[0] : "dashboard";
+    const companyId = (v === "companies" && parts[1] === "company" && parts[2]) ? parts[2] : null;
+    return { view: v, companyId };
   };
-  const [view, setViewRaw] = useState(viewFromHash);
+  const [view, setViewRaw] = useState(() => parseHash().view);
+  const [selectedCompanyId, setSelectedCompanyIdRaw] = useState(() => parseHash().companyId); // when set, show company detail
+
+  // Build the hash string for a given view + company.
+  const hashFor = (v, companyId) => (v === "companies" && companyId) ? `companies/company/${companyId}` : v;
+
   // Wrap setView so changing tabs also updates the URL hash (adds a history entry,
   // so refresh restores the tab and the back button walks tab history).
   const setView = (v) => {
     setViewRaw(v);
-    if (typeof window !== "undefined" && viewFromHash() !== v) {
-      window.location.hash = v;
+    // Leaving companies clears any open company.
+    const nextCompany = v === "companies" ? selectedCompanyId : null;
+    if (v !== "companies") setSelectedCompanyIdRaw(null);
+    const target = hashFor(v, nextCompany);
+    if (typeof window !== "undefined" && window.location.hash.replace(/^#\/?/, "") !== target) {
+      window.location.hash = target;
     }
   };
-  // Keep view in sync when the user uses the browser back/forward buttons.
+  // Open/close a company detail — updates both state and the hash.
+  const setSelectedCompanyId = (id) => {
+    setSelectedCompanyIdRaw(id);
+    const target = hashFor("companies", id);
+    if (typeof window !== "undefined" && window.location.hash.replace(/^#\/?/, "") !== target) {
+      window.location.hash = target;
+    }
+  };
+  // Keep view + company in sync when the user uses browser back/forward (or edits the URL).
   useEffect(() => {
-    const onHash = () => setViewRaw(viewFromHash());
+    const onHash = () => { const p = parseHash(); setViewRaw(p.view); setSelectedCompanyIdRaw(p.companyId); };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -383,7 +405,6 @@ export default function App() {
   const [leads, setLeads] = useState([]);
   const [leadContacts, setLeadContacts] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState(null); // when set, show company detail
   const [loaded, setLoaded] = useState(false);       // finished checking session
   const [authed, setAuthed] = useState(false);       // has a valid session
 
@@ -400,9 +421,9 @@ export default function App() {
   const openCompanyByName = (name) => {
     const key = (name || "").trim().toLowerCase();
     const c = companies.find((x) => x.nameKey === key);
-    if (c) { setSelectedCompanyId(c.id); setView("companies"); }
+    if (c) { setViewRaw("companies"); setSelectedCompanyIdRaw(c.id); window.location.hash = hashFor("companies", c.id); }
   };
-  const openCompanyById = (id) => { setSelectedCompanyId(id); setView("companies"); };
+  const openCompanyById = (id) => { setViewRaw("companies"); setSelectedCompanyIdRaw(id); window.location.hash = hashFor("companies", id); };
 
   // On load and whenever auth state changes, resolve session -> profile -> data.
   useEffect(() => {
@@ -571,7 +592,7 @@ export default function App() {
           <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", minWidth: 0, maxWidth: "100%" }}>
             <nav className="hdr-nav" style={{ display: "flex", flexWrap: "wrap", gap: 6, background: "rgba(255,255,255,.08)", padding: 4, borderRadius: 10, maxWidth: "100%" }}>
               {nav.map(([id, label, Icon]) => (
-                <button key={id} onClick={() => { setView(id); if (id !== "companies") setSelectedCompanyId(null); }} className="tap"
+                <button key={id} onClick={() => { if (id === "companies") { setViewRaw("companies"); setSelectedCompanyIdRaw(null); window.location.hash = "companies"; } else { setView(id); } }} className="tap"
                   style={{ display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 7, padding: "8px 13px", fontSize: 13.5, fontWeight: 500, whiteSpace: "nowrap",
                     background: view === id ? PAPER : "transparent", color: view === id ? INK : PAPER }}>
                   <Icon size={15} /> {label}
