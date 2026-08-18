@@ -925,7 +925,13 @@ function LeadDetailPanel({ lead, users, campaigns, entries, contacts, assignable
 
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState("");
-  const [showDetails, setShowDetails] = useState(false); // lead details collapsed by default
+  // Two-column layout on tablet/desktop widths; single column on phones.
+  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.innerWidth >= 900);
+  useEffect(() => {
+    const onResize = () => setWide(window.innerWidth >= 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // Combined action: save any lead-field edits (notes, reminder, contact) AND
   // log the activity (if calls/emails/appts were entered) in one click.
@@ -986,9 +992,188 @@ function LeadDetailPanel({ lead, users, campaigns, entries, contacts, assignable
   const selStyle = { ...inputStyle, appearance: "none", cursor: "pointer", marginBottom: 0 };
   const showAppt = (+log.appts || 0) >= 1;
 
+  // --- Content blocks (arranged differently for wide vs narrow) ---
+  const logBlock = (
+    <>
+      {/* Status tap-through — saves instantly */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={lblStyle}>Status — tap to advance</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {LEAD_STATUSES.map((s) => {
+            const on = f.status === s;
+            const meta = LEAD_STATUS_META[s];
+            return (
+              <button key={s} onClick={() => setStatusNow(s)} className="tap"
+                style={{ flex: "1 1 auto", border: on ? `1.5px solid ${meta.color}` : `1px solid ${LINE_C}`, background: on ? meta.bg : "#fff", color: on ? meta.color : "#5A6B7B", borderRadius: 9, padding: "9px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                {meta.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Log activity — primary action */}
+      <div style={{ background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Log what happened</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+          <div><div style={lblStyle}>Calls</div><input type="number" min="0" value={log.calls} onChange={(e) => setLog({ ...log, calls: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+          <div><div style={lblStyle}>Emails</div><input type="number" min="0" value={log.emails} onChange={(e) => setLog({ ...log, emails: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+          <div><div style={lblStyle}>Appts</div><input type="number" min="0" value={log.appts} onChange={(e) => setLog({ ...log, appts: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <div style={lblStyle}>What happened on this touch?</div>
+          <textarea value={log.notes} onChange={(e) => setLog({ ...log, notes: e.target.value })} rows={2} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Left voicemail, spoke with decision maker, sent proposal…" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: (isBDR || showAppt) ? 12 : 0 }}>
+          <div><div style={lblStyle}>Date</div><input type="date" value={log.date} onChange={(e) => setLog({ ...log, date: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+          <div><div style={lblStyle}>Carrier Rep</div><input value={log.carrierRep} onChange={(e) => setLog({ ...log, carrierRep: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Optional" /></div>
+        </div>
+        {isBDR && (
+          <div style={{ marginBottom: showAppt ? 12 : 0 }}>
+            <div style={lblStyle}>Working for (Sales Rep)</div>
+            <div style={{ position: "relative" }}>
+              <select value={log.workingFor} onChange={(e) => setLog({ ...log, workingFor: e.target.value })} style={selStyle}>
+                <option value="" disabled>Choose a Sales Rep…</option>
+                <option value="self">Self-generated</option>
+                {salesReps.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </div>
+        )}
+        {showAppt && (
+          <div style={{ background: "#EAF6FF", borderRadius: 10, padding: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: EMAIL, marginBottom: 8 }}>Appointment details (optional)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div><div style={lblStyle}>Date</div><input type="date" value={log.apptDate} onChange={(e) => setLog({ ...log, apptDate: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+              <div><div style={lblStyle}>Time</div><input type="time" value={log.apptTime} onChange={(e) => setLog({ ...log, apptTime: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <div style={lblStyle}>Timezone</div>
+              <div style={{ position: "relative" }}>
+                <select value={log.apptTz} onChange={(e) => setLog({ ...log, apptTz: e.target.value })} style={selStyle}>
+                  {US_TIMEZONES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+                <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: EMAIL, opacity: 0.8, margin: "8px 0 0" }}>Logging an appointment creates an opportunity automatically.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Follow-up reminder */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={lblStyle}>Follow-up reminder date</div>
+        <input type="date" value={f.nextActionDate ? f.nextActionDate.slice(0,10) : ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={{ ...inputStyle, marginBottom: 4 }} />
+        <p style={{ fontSize: 11.5, opacity: 0.55, margin: 0 }}>Set a date to be reminded in Follow-ups. {f.starred ? "This lead is starred as important." : "Tap the star (top-right) to flag it important."}</p>
+      </div>
+
+      {/* The one button */}
+      <button onClick={saveAndLog} disabled={saving} className="tap" style={{ width: "100%", background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+        {saving ? "Saving…" : "Save & log"}
+      </button>
+      {done && <div style={{ marginTop: 10, background: done.includes("✓") ? "#E7F6EC" : "#FDECEA", color: done.includes("✓") ? "#1B7A41" : "#8E2A20", borderRadius: 8, padding: "9px 12px", fontSize: 13 }}>{done}</div>}
+    </>
+  );
+
+  const historyBlock = (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 10 }}>
+        Account history {history.length > 0 && <span style={{ opacity: 0.6 }}>· {history.length}</span>}
+      </div>
+      {history.length === 0 ? (
+        <p style={{ fontSize: 13, opacity: 0.5, margin: 0 }}>No activity logged on this account yet. Log a call, email, or appointment to start the record.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {history.map((e) => {
+            const bits = [];
+            if (e.calls) bits.push(`${e.calls} call${e.calls > 1 ? "s" : ""}`);
+            if (e.emails) bits.push(`${e.emails} email${e.emails > 1 ? "s" : ""}`);
+            if (e.appts) bits.push(`${e.appts} appt${e.appts > 1 ? "s" : ""}`);
+            return (
+              <div key={e.id} style={{ background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: e.notes ? 5 : 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700 }}>{bits.length ? bits.join(" · ") : "Activity"}</span>
+                  <span style={{ fontSize: 11.5, opacity: 0.55, whiteSpace: "nowrap" }}>{fmtReportDate(e.date)}</span>
+                </div>
+                {e.notes && <div style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 5 }}>{e.notes}</div>}
+                <div style={{ fontSize: 11.5, opacity: 0.5 }}>
+                  {repName(e.userId) || "Someone"}{e.bdrId && e.bdrId !== e.userId ? ` · BDR: ${repName(e.bdrId) || "?"}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const detailsInner = (
+    <div>
+      {/* Contacts at this company */}
+      <div style={lblStyle}>Contacts</div>
+      {(contacts || []).length === 0 ? (
+        <p style={{ fontSize: 12.5, opacity: 0.5, margin: "0 0 10px" }}>No saved contacts yet. Add one below.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+          {contacts.map((c) => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "8px 10px" }}>
+              <div style={{ minWidth: 0, fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>{c.name || "(no name)"}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : ""}{c.isPrimary ? <span style={{ fontSize: 10.5, fontWeight: 700, color: EMAIL, background: EMAIL + "16", borderRadius: 5, padding: "1px 6px", marginLeft: 6 }}>PRIMARY</span> : ""}</div>
+                {(c.phone || c.email) && <div style={{ opacity: 0.65, marginTop: 1 }}>{[c.phone, c.email].filter(Boolean).join(" · ")}</div>}
+              </div>
+              <button onClick={() => removeContact(c.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4, flexShrink: 0 }}><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Add a contact */}
+      <div style={{ border: `1px dashed ${LINE_C}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, marginBottom: 8 }}>Add a contact</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <input value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Name" />
+          <input value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Title" />
+          <input value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Phone" />
+          <input value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Email" />
+        </div>
+        <button onClick={addContact} disabled={addingContact} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}><Plus size={14} /> {addingContact ? "Adding…" : "Add contact"}</button>
+      </div>
+      {canManageAll && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={lblStyle}>Assigned to</div>
+            <div style={{ position: "relative" }}>
+              <select value={f.assignedTo} onChange={(e) => setF({ ...f, assignedTo: e.target.value })} style={selStyle}>
+                <option value="">Unassigned</option>
+                {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </div>
+          <div>
+            <div style={lblStyle}>Campaign</div>
+            <div style={{ position: "relative" }}>
+              <select value={f.campaignId} onChange={(e) => setF({ ...f, campaignId: e.target.value })} style={selStyle}>
+                <option value="">No campaign</option>
+                {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{ marginBottom: 4 }}>
+        <div style={lblStyle}>Lead notes</div>
+        <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={3} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Summary / context for this lead…" />
+      </div>
+      <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0" }}>Edits here are saved with the “Save & log” button.</p>
+    </div>
+  );
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, width: "min(560px, 96vw)", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, width: wide ? "min(940px, 96vw)" : "min(560px, 96vw)", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
         <div style={{ position: "sticky", top: 0, background: PAPER, borderBottom: `1px solid ${LINE_C}`, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", zIndex: 2 }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: 0 }}>{lead.company}</h2>
@@ -1002,191 +1187,29 @@ function LeadDetailPanel({ lead, users, campaigns, entries, contacts, assignable
           </div>
         </div>
 
-        <div style={{ padding: 22 }}>
-          {/* Status tap-through — the quick advance, saves instantly */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={lblStyle}>Status — tap to advance</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {LEAD_STATUSES.map((s) => {
-                const on = f.status === s;
-                const meta = LEAD_STATUS_META[s];
-                return (
-                  <button key={s} onClick={() => setStatusNow(s)} className="tap"
-                    style={{ flex: "1 1 auto", border: on ? `1.5px solid ${meta.color}` : `1px solid ${LINE_C}`, background: on ? meta.bg : "#fff", color: on ? meta.color : "#5A6B7B", borderRadius: 9, padding: "9px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                    {meta.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* ---- LOG ACTIVITY — primary action, open at top ---- */}
-          <div style={{ background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Log what happened</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
-              <div><div style={lblStyle}>Calls</div><input type="number" min="0" value={log.calls} onChange={(e) => setLog({ ...log, calls: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
-              <div><div style={lblStyle}>Emails</div><input type="number" min="0" value={log.emails} onChange={(e) => setLog({ ...log, emails: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
-              <div><div style={lblStyle}>Appts</div><input type="number" min="0" value={log.appts} onChange={(e) => setLog({ ...log, appts: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
-            </div>
-
-            <div style={{ marginBottom: 12 }}>
-              <div style={lblStyle}>What happened on this touch?</div>
-              <textarea value={log.notes} onChange={(e) => setLog({ ...log, notes: e.target.value })} rows={2} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Left voicemail, spoke with decision maker, sent proposal…" />
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: (isBDR || showAppt) ? 12 : 0 }}>
-              <div><div style={lblStyle}>Date</div><input type="date" value={log.date} onChange={(e) => setLog({ ...log, date: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
-              <div><div style={lblStyle}>Carrier Rep</div><input value={log.carrierRep} onChange={(e) => setLog({ ...log, carrierRep: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Optional" /></div>
-            </div>
-
-            {isBDR && (
-              <div style={{ marginBottom: showAppt ? 12 : 0 }}>
-                <div style={lblStyle}>Working for (Sales Rep)</div>
-                <div style={{ position: "relative" }}>
-                  <select value={log.workingFor} onChange={(e) => setLog({ ...log, workingFor: e.target.value })} style={selStyle}>
-                    <option value="" disabled>Choose a Sales Rep…</option>
-                    <option value="self">Self-generated</option>
-                    {salesReps.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                  <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-                </div>
+        {wide ? (
+          /* Two columns: logging on the left, history + details on the right */
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 22, padding: 22, alignItems: "start" }}>
+            <div>{logBlock}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {historyBlock}
+              <div style={{ borderTop: `1px solid ${LINE_C}`, paddingTop: 16 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 12 }}>Lead details</div>
+                {detailsInner}
               </div>
-            )}
-
-            {showAppt && (
-              <div style={{ background: "#EAF6FF", borderRadius: 10, padding: 12 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: EMAIL, marginBottom: 8 }}>Appointment details (optional)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <div><div style={lblStyle}>Date</div><input type="date" value={log.apptDate} onChange={(e) => setLog({ ...log, apptDate: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
-                  <div><div style={lblStyle}>Time</div><input type="time" value={log.apptTime} onChange={(e) => setLog({ ...log, apptTime: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <div style={lblStyle}>Timezone</div>
-                  <div style={{ position: "relative" }}>
-                    <select value={log.apptTz} onChange={(e) => setLog({ ...log, apptTz: e.target.value })} style={selStyle}>
-                      {US_TIMEZONES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
-                    </select>
-                    <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-                  </div>
-                </div>
-                <p style={{ fontSize: 12, color: EMAIL, opacity: 0.8, margin: "8px 0 0" }}>Logging an appointment creates an opportunity automatically.</p>
-              </div>
-            )}
-          </div>
-
-          {/* Follow-up reminder */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={lblStyle}>Follow-up reminder date</div>
-            <input type="date" value={f.nextActionDate ? f.nextActionDate.slice(0,10) : ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={{ ...inputStyle, marginBottom: 4 }} />
-            <p style={{ fontSize: 11.5, opacity: 0.55, margin: 0 }}>Set a date to be reminded in Follow-ups. {f.starred ? "This lead is starred as important." : "Tap the star (top-right) to flag it important."}</p>
-          </div>
-
-          {/* THE one button: saves lead changes AND logs activity together */}
-          <button onClick={saveAndLog} disabled={saving} className="tap" style={{ width: "100%", background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
-            {saving ? "Saving…" : "Save & log"}
-          </button>
-          {done && <div style={{ marginTop: 10, background: done.includes("✓") ? "#E7F6EC" : "#FDECEA", color: done.includes("✓") ? "#1B7A41" : "#8E2A20", borderRadius: 8, padding: "9px 12px", fontSize: 13 }}>{done}</div>}
-
-          {/* ---- Account history ---- */}
-          <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 18 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 10 }}>
-              Account history {history.length > 0 && <span style={{ opacity: 0.6 }}>· {history.length}</span>}
             </div>
-            {history.length === 0 ? (
-              <p style={{ fontSize: 13, opacity: 0.5, margin: 0 }}>No activity logged on this account yet. Log a call, email, or appointment above to start the record.</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {history.map((e) => {
-                  const bits = [];
-                  if (e.calls) bits.push(`${e.calls} call${e.calls > 1 ? "s" : ""}`);
-                  if (e.emails) bits.push(`${e.emails} email${e.emails > 1 ? "s" : ""}`);
-                  if (e.appts) bits.push(`${e.appts} appt${e.appts > 1 ? "s" : ""}`);
-                  return (
-                    <div key={e.id} style={{ background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "10px 12px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: e.notes ? 5 : 0 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 700 }}>{bits.length ? bits.join(" · ") : "Activity"}</span>
-                        <span style={{ fontSize: 11.5, opacity: 0.55, whiteSpace: "nowrap" }}>{fmtReportDate(e.date)}</span>
-                      </div>
-                      {e.notes && <div style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 5 }}>{e.notes}</div>}
-                      <div style={{ fontSize: 11.5, opacity: 0.5 }}>
-                        {repName(e.userId) || "Someone"}{e.bdrId && e.bdrId !== e.userId ? ` · BDR: ${repName(e.bdrId) || "?"}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
-
-          {/* ---- Lead details (housekeeping) — collapsed by default ---- */}
-          <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 14 }}>
-            <button onClick={() => setShowDetails((v) => !v)} className="tap" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
-              <span style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6" }}>Lead details</span>
-              <ChevronDown size={16} style={{ opacity: 0.5, transform: showDetails ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
-            </button>
-            {showDetails && (
-              <div style={{ marginTop: 14 }}>
-                {/* Contacts at this company */}
-                <div style={lblStyle}>Contacts</div>
-                {(contacts || []).length === 0 ? (
-                  <p style={{ fontSize: 12.5, opacity: 0.5, margin: "0 0 10px" }}>No saved contacts yet. Add one below.</p>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-                    {contacts.map((c) => (
-                      <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "8px 10px" }}>
-                        <div style={{ minWidth: 0, fontSize: 13 }}>
-                          <div style={{ fontWeight: 600 }}>{c.name || "(no name)"}{c.title ? <span style={{ fontWeight: 400, opacity: 0.6 }}> · {c.title}</span> : ""}{c.isPrimary ? <span style={{ fontSize: 10.5, fontWeight: 700, color: EMAIL, background: EMAIL + "16", borderRadius: 5, padding: "1px 6px", marginLeft: 6 }}>PRIMARY</span> : ""}</div>
-                          {(c.phone || c.email) && <div style={{ opacity: 0.65, marginTop: 1 }}>{[c.phone, c.email].filter(Boolean).join(" · ")}</div>}
-                        </div>
-                        <button onClick={() => removeContact(c.id)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4, flexShrink: 0 }}><Trash2 size={14} /></button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {/* Add a contact */}
-                <div style={{ border: `1px dashed ${LINE_C}`, borderRadius: 10, padding: 12, marginBottom: 14 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, marginBottom: 8 }}>Add a contact</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-                    <input value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Name" />
-                    <input value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Title" />
-                    <input value={newContact.phone} onChange={(e) => setNewContact({ ...newContact, phone: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Phone" />
-                    <input value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Email" />
-                  </div>
-                  <button onClick={addContact} disabled={addingContact} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}><Plus size={14} /> {addingContact ? "Adding…" : "Add contact"}</button>
-                </div>
-                {canManageAll && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-                    <div>
-                      <div style={lblStyle}>Assigned to</div>
-                      <div style={{ position: "relative" }}>
-                        <select value={f.assignedTo} onChange={(e) => setF({ ...f, assignedTo: e.target.value })} style={selStyle}>
-                          <option value="">Unassigned</option>
-                          {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                        </select>
-                        <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div style={lblStyle}>Campaign</div>
-                      <div style={{ position: "relative" }}>
-                        <select value={f.campaignId} onChange={(e) => setF({ ...f, campaignId: e.target.value })} style={selStyle}>
-                          <option value="">No campaign</option>
-                          {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                        <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div style={{ marginBottom: 4 }}>
-                  <div style={lblStyle}>Lead notes</div>
-                  <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={3} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Summary / context for this lead…" />
-                </div>
-                <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0" }}>Edits here are saved with the “Save & log” button above.</p>
-              </div>
-            )}
+        ) : (
+          /* Single column: everything expanded, no collapse carrot */
+          <div style={{ padding: 22 }}>
+            {logBlock}
+            <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 18 }}>{historyBlock}</div>
+            <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 18 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 14 }}>Lead details</div>
+              {detailsInner}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
