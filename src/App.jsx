@@ -689,6 +689,7 @@ export default function App() {
               entries={visibleEntries}
               deals={visibleDeals}
               onOpen={openCompanyById}
+              refetch={refetch}
             />
           )
         )}
@@ -2123,8 +2124,16 @@ function LeadUpload({ users, assignable, campaigns, leads, refetch, onClose }) {
 }
 
 // ---- CRM: Companies list ----
-function CompaniesList({ companies, entries, deals, onOpen }) {
+function CompaniesList({ companies, entries, deals, onOpen, refetch }) {
   const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all"); // all | clients | prospects
+  const [savingId, setSavingId] = useState("");
+  // Toggle a company's client/prospect status inline (stopPropagation so the row doesn't open).
+  const toggleClient = async (c, e) => {
+    e.stopPropagation();
+    setSavingId(c.id);
+    try { await api.updateCompany(c.id, { isClient: !c.isClient }); await refetch(); } finally { setSavingId(""); }
+  };
   // Only show companies the user actually has visible activity/deals for (matches scope),
   // plus any company with no rows yet that they can still see (RLS already filtered `companies`).
   const stats = useMemo(() => {
@@ -2144,18 +2153,28 @@ function CompaniesList({ companies, entries, deals, onOpen }) {
 
   const rows = companies
     .filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()))
+    .filter((c) => typeFilter === "all" || (typeFilter === "clients" ? c.isClient : !c.isClient))
     .sort((a, b) => a.name.localeCompare(b.name));
+  const clientCount = companies.filter((c) => c.isClient).length;
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
           <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 29, fontWeight: 600, margin: 0 }}>Companies</h1>
-          <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>{rows.length} {rows.length === 1 ? "company" : "companies"} in your scope</p>
+          <p style={{ margin: "4px 0 0", opacity: 0.55, fontSize: 14 }}>{rows.length} {rows.length === 1 ? "company" : "companies"}{typeFilter === "all" ? " in your scope" : typeFilter === "clients" ? " (clients)" : " (prospects)"} · {clientCount} client{clientCount === 1 ? "" : "s"}</p>
         </div>
-        <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 4, background: "#EEF2F6", borderRadius: 10, padding: 4 }}>
+            {[["all", "All"], ["clients", "Clients"], ["prospects", "Prospects"]].map(([val, label]) => (
+              <button key={val} onClick={() => setTypeFilter(val)} className="tap"
+                style={{ border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", background: typeFilter === val ? "#fff" : "transparent", color: typeFilter === val ? INK : "#5A6B7B", boxShadow: typeFilter === val ? "0 1px 3px rgba(0,0,0,.1)" : "none" }}>
+                {label}
+              </button>
+            ))}
+          </div>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search companies…"
-            style={{ ...inputStyle, width: 260, marginBottom: 0 }} />
+            style={{ ...inputStyle, width: 220, marginBottom: 0 }} />
         </div>
       </div>
 
@@ -2164,20 +2183,28 @@ function CompaniesList({ companies, entries, deals, onOpen }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 760 }}>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
-                {["Company", "Activities", "Calls", "Emails", "Appts", "Deals", "Opportunities", "Last activity"].map((h) => (
+                {["Company", "Type", "Activities", "Calls", "Emails", "Appts", "Deals", "Opportunities", "Last activity"].map((h) => (
                   <th key={h} style={{ textAlign: h === "Company" ? "left" : "center", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No companies yet. They appear here as activity is logged.</td></tr>
+                <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No companies{companies.length ? " match this filter" : " yet. They appear here as activity is logged"}.</td></tr>
               ) : rows.map((c) => {
                 const s = stats[c.id] || {};
                 return (
                   <tr key={c.id} className="tap" onClick={() => onOpen(c.id)}
                     style={{ borderTop: `1px solid ${LINE_C}`, cursor: "pointer" }}>
                     <td style={{ padding: "11px 14px", fontWeight: 600, color: EMAIL, whiteSpace: "nowrap" }}>{c.name}</td>
+                    <td style={{ padding: "11px 14px", textAlign: "center" }}>
+                      <button onClick={(e) => toggleClient(c, e)} disabled={savingId === c.id} className="tap"
+                        title="Click to toggle client / prospect"
+                        style={{ cursor: "pointer", border: "none", borderRadius: 20, padding: "3px 11px", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap",
+                          background: c.isClient ? "#E7F6EC" : "#EEF2F6", color: c.isClient ? "#1B7A41" : "#5A6B7B" }}>
+                        {c.isClient ? "Client" : "Prospect"}
+                      </button>
+                    </td>
                     <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.activities || 0}</td>
                     <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.calls || 0}</td>
                     <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.emails || 0}</td>
@@ -2273,7 +2300,15 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg, ${BTN_A}, ${BTN_B})`, display: "grid", placeItems: "center", color: "#fff", fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600 }}>{(company.name[0] || "?").toUpperCase()}</div>
           <div>
-            <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, margin: 0 }}>{company.name}</h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, margin: 0 }}>{company.name}</h1>
+              <button onClick={async () => { await api.updateCompany(company.id, { isClient: !company.isClient }); await refetch(); }} className="tap"
+                title="Click to toggle client / prospect"
+                style={{ cursor: "pointer", border: "none", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                  background: company.isClient ? "#E7F6EC" : "#EEF2F6", color: company.isClient ? "#1B7A41" : "#5A6B7B" }}>
+                {company.isClient ? "✓ Client" : "Prospect"}
+              </button>
+            </div>
             <div style={{ fontSize: 13, opacity: 0.6 }}>{company.ban ? `BAN ${company.ban}` : "No BAN set"}</div>
           </div>
         </div>
