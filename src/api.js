@@ -565,6 +565,39 @@ export async function listLeads() {
   return (data || []).map(toCamelLead);
 }
 
+// ---- Lead contacts (multiple contacts per lead) ----
+const toCamelLeadContact = (c) => c && ({ id: c.id, leadId: c.lead_id, name: c.name || "", title: c.title || "", phone: c.phone || "", email: c.email || "", isPrimary: !!c.is_primary, createdAt: c.created_at });
+
+export async function listLeadContacts() {
+  const { data, error } = await supabase.from("lead_contacts").select("*").order("is_primary", { ascending: false }).order("created_at");
+  if (error) throw error;
+  return (data || []).map(toCamelLeadContact);
+}
+
+export async function addLeadContact(c) {
+  const row = { lead_id: c.leadId, name: c.name || null, title: c.title || null, phone: c.phone || null, email: c.email || null, is_primary: !!c.isPrimary };
+  const { data, error } = await supabase.from("lead_contacts").insert(row).select().single();
+  if (error) throw error;
+  return toCamelLeadContact(data);
+}
+
+export async function updateLeadContact(id, patch) {
+  const db = {};
+  if (patch.name !== undefined) db.name = patch.name || null;
+  if (patch.title !== undefined) db.title = patch.title || null;
+  if (patch.phone !== undefined) db.phone = patch.phone || null;
+  if (patch.email !== undefined) db.email = patch.email || null;
+  if (patch.isPrimary !== undefined) db.is_primary = !!patch.isPrimary;
+  const { data, error } = await supabase.from("lead_contacts").update(db).eq("id", id).select().single();
+  if (error) throw error;
+  return toCamelLeadContact(data);
+}
+
+export async function deleteLeadContact(id) {
+  const { error } = await supabase.from("lead_contacts").delete().eq("id", id);
+  if (error) throw error;
+}
+
 // Create one lead. created_by is set to the current user.
 export async function addLead(lead) {
   const { data: me } = await supabase.auth.getUser();
