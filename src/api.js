@@ -584,6 +584,33 @@ export async function addLeadsBulk(leads) {
   return (data || []).map(toCamelLead);
 }
 
+// Upload that both UPDATES existing leads (rows carrying an id) and INSERTS new
+// ones (rows without an id). Used by the download -> edit -> re-upload round-trip.
+// Returns { updated, inserted } counts.
+export async function upsertLeadsFromUpload(leads) {
+  const { data: me } = await supabase.auth.getUser();
+  const uid = me?.user?.id || null;
+  const toUpdate = leads.filter((l) => l.id);
+  const toInsert = leads.filter((l) => !l.id);
+  let updated = 0, inserted = 0;
+  // Updates: one row at a time so a bad id doesn't fail the whole batch.
+  for (const l of toUpdate) {
+    const row = fromCamelLead(l);
+    delete row.created_by; // never overwrite the original creator
+    delete row.id;         // id is the match key, not a column to set
+    const { error } = await supabase.from("leads").update(row).eq("id", l.id);
+    if (error) throw new Error(`Row for "${l.company}" failed to update: ${error.message}`);
+    updated++;
+  }
+  if (toInsert.length) {
+    const rows = toInsert.map((l) => ({ ...fromCamelLead(l), created_by: uid }));
+    const { data, error } = await supabase.from("leads").insert(rows).select();
+    if (error) throw error;
+    inserted = (data || []).length;
+  }
+  return { updated, inserted };
+}
+
 // Update a lead (status, assignment, notes, any field).
 export async function updateLead(id, patch) {
   const db = {};
@@ -626,6 +653,30 @@ export async function createCampaign(camp) {
   const { data, error } = await supabase.from("campaigns").insert(row).select().single();
   if (error) throw error;
   return toCamelCampaign(data);
+}
+
+// Bulk create campaigns from an uploaded list. Skips any whose name already
+// exists (case-insensitive). Returns { created, skipped }.
+export async function bulkCreateCampaigns(camps) {
+  const me = await supabase.auth.getUser();
+  const uid = me?.data?.user?.id || null;
+  const { data: existing } = await supabase.from("campaigns").select("name");
+  const have = new Set((existing || []).map((c) => c.name.trim().toLowerCase()));
+  const seen = new Set();
+  const rows = [];
+  let skipped = 0;
+  for (const c of camps) {
+    const name = (c.name || "").trim();
+    const key = name.toLowerCase();
+    if (!name) continue;
+    if (have.has(key) || seen.has(key)) { skipped++; continue; }
+    seen.add(key);
+    rows.push({ name, vendor: (c.vendor || "").trim() || null, created_by: uid });
+  }
+  if (rows.length === 0) return { created: 0, skipped };
+  const { data, error } = await supabase.from("campaigns").insert(rows).select();
+  if (error) throw error;
+  return { created: (data || []).length, skipped };
 }
 
 export async function updateCampaign(id, patch) {
