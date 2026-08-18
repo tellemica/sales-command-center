@@ -545,7 +545,7 @@ const toCamelLead = (l) => l && ({
   phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
   source: l.source || "", notes: l.notes || "", status: l.status || "New",
   assignedTo: l.assigned_to || "", createdBy: l.created_by || "", companyId: l.company_id || "",
-  campaignId: l.campaign_id || "",
+  campaignId: l.campaign_id || "", starred: !!l.starred,
   nextActionDate: l.next_action_date || "",
   createdAt: l.created_at, updatedAt: l.updated_at,
 });
@@ -555,7 +555,7 @@ const fromCamelLead = (l) => ({
   phone: l.phone || "", email: l.email || "", ban: l.ban || "", fan: l.fan || "",
   source: l.source || "", notes: l.notes || "", status: l.status || "New",
   assigned_to: l.assignedTo || null, created_by: l.createdBy || null,
-  campaign_id: l.campaignId || null,
+  campaign_id: l.campaignId || null, starred: !!l.starred,
   next_action_date: l.nextActionDate || null,
 });
 
@@ -619,6 +619,7 @@ export async function updateLead(id, patch) {
   Object.keys(map).forEach((k) => { if (patch[k] !== undefined) db[map[k]] = patch[k]; });
   if (patch.assignedTo !== undefined) db.assigned_to = patch.assignedTo || null;
   if (patch.campaignId !== undefined) db.campaign_id = patch.campaignId || null;
+  if (patch.starred !== undefined) db.starred = !!patch.starred;
   if (patch.nextActionDate !== undefined) db.next_action_date = patch.nextActionDate || null;
   const { data, error } = await supabase.from("leads").update(db).eq("id", id).select().single();
   if (error) throw error;
