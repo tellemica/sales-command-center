@@ -879,6 +879,238 @@ const LEAD_STATUS_META = {
   dead:      { label: "Dead",      color: "#8494A6", bg: "#EEF1F4" },
 };
 
+// ---- Lead detail panel: work a lead without leaving the Leads tab ----
+// Edit the lead's fields AND log full activity (call/email/appt) against it.
+// Appointments create an opportunity, same as the main Log Activity screen.
+function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, canManageAll, refetch, onOpenCompany, onClose }) {
+  const isBDR = effectiveUser.role === "bdr";
+  const salesReps = (users || []).filter((u) => u.role === "sales");
+
+  // Editable lead fields
+  const [f, setF] = useState({
+    status: lead.status || "new", contact: lead.contact || "", phone: lead.phone || "",
+    email: lead.email || "", notes: lead.notes || "", nextActionDate: lead.nextActionDate || "",
+    assignedTo: lead.assignedTo || "", campaignId: lead.campaignId || "",
+  });
+  const [savingLead, setSavingLead] = useState(false);
+  const [leadSaved, setLeadSaved] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Activity-logging form (against this lead's company)
+  const [showLog, setShowLog] = useState(false);
+  const [log, setLog] = useState({
+    date: TODAY(), calls: "", emails: "", appts: "", notes: "", carrierRep: "",
+    apptDate: "", apptTime: "", apptTz: effectiveUser.timezone || "America/New_York",
+    workingFor: isBDR ? "" : "self", bdrId: isBDR ? effectiveUser.id : "",
+  });
+  const [logging, setLogging] = useState(false);
+  const [logDone, setLogDone] = useState("");
+
+  const saveLead = async () => {
+    setSavingLead(true); setErr("");
+    try {
+      await api.updateLead(lead.id, {
+        status: f.status, contact: f.contact.trim(), phone: f.phone.trim(), email: f.email.trim(),
+        notes: f.notes.trim(), nextActionDate: f.nextActionDate || null,
+        ...(canManageAll ? { assignedTo: f.assignedTo || null, campaignId: f.campaignId || null } : {}),
+      });
+      await refetch();
+      setLeadSaved(true); setTimeout(() => setLeadSaved(false), 1800);
+    } catch (e) { setErr(e?.message || "Could not save the lead."); }
+    finally { setSavingLead(false); }
+  };
+
+  const submitLog = async () => {
+    const anyActivity = (+log.calls || 0) + (+log.emails || 0) + (+log.appts || 0) > 0;
+    if (!anyActivity) { setLogDone("Enter at least one call, email, or appointment."); return; }
+    if (isBDR && !log.workingFor) { setLogDone("Choose who you're working for."); return; }
+    setLogging(true); setLogDone("");
+    const taggedRepId = log.workingFor && log.workingFor !== "self" ? log.workingFor : null;
+    try {
+      await api.addEntry({
+        userId: effectiveUser.id, date: log.date,
+        company: lead.company, contact: f.contact.trim(), phone: f.phone.trim(), email: f.email.trim(),
+        calls: +log.calls || 0, emails: +log.emails || 0, appts: +log.appts || 0, notes: log.notes.trim(),
+        carrierRep: log.carrierRep.trim(), taggedRepId, bdrId: log.bdrId || null,
+      });
+      if ((+log.appts || 0) >= 1) {
+        try {
+          const start = (log.apptDate && log.apptTime) ? zonedToUTC(log.apptDate, log.apptTime, log.apptTz) : null;
+          await api.upsertAppointmentDeal({
+            company: lead.company, contact: f.contact.trim(), contactEmail: f.email.trim(),
+            apptAt: start ? start.toISOString() : null, ownerId: taggedRepId || effectiveUser.id, taggedRepId,
+          });
+        } catch (e) { console.error("upsertAppointmentDeal failed:", e); setLogDone("Activity saved, but the opportunity couldn't be created: " + (e?.message || e)); }
+      }
+      await refetch();
+      setLog({ ...log, calls: "", emails: "", appts: "", notes: "", carrierRep: "", apptDate: "", apptTime: "" });
+      setShowLog(false);
+      setLogDone((prev) => prev && prev.includes("couldn't") ? prev : "Activity logged ✓");
+      setTimeout(() => setLogDone(""), 2400);
+    } catch (e) { setLogDone("Couldn't log activity: " + (e?.message || e)); }
+    finally { setLogging(false); }
+  };
+
+  const selStyle = { ...inputStyle, appearance: "none", cursor: "pointer", marginBottom: 0 };
+  const showAppt = (+log.appts || 0) >= 1;
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, height: "100%", width: "min(560px, 100vw)", overflowY: "auto", boxShadow: "-8px 0 30px rgba(0,0,0,.15)" }}>
+        <div style={{ position: "sticky", top: 0, background: PAPER, borderBottom: `1px solid ${LINE_C}`, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", zIndex: 2 }}>
+          <div style={{ minWidth: 0 }}>
+            <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: 0 }}>{lead.company}</h2>
+            <button onClick={() => { onClose(); onOpenCompany(lead.company); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "4px 0 0" }}>Open full company page →</button>
+          </div>
+          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, flexShrink: 0 }}><X size={20} /></button>
+        </div>
+
+        <div style={{ padding: 22 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 10 }}>Lead details</div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <div style={lblStyle}>Status</div>
+              <div style={{ position: "relative" }}>
+                <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} style={selStyle}>
+                  {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
+                </select>
+                <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+              </div>
+            </div>
+            <div>
+              <div style={lblStyle}>Next action date</div>
+              <input type="date" value={f.nextActionDate ? f.nextActionDate.slice(0,10) : ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={lblStyle}>Contact name</div>
+            <input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Name / title" />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div>
+              <div style={lblStyle}>Phone</div>
+              <input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="(610) 555-0100" />
+            </div>
+            <div>
+              <div style={lblStyle}>Email</div>
+              <input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="name@company.com" />
+            </div>
+          </div>
+
+          {canManageAll && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div>
+                <div style={lblStyle}>Assigned to</div>
+                <div style={{ position: "relative" }}>
+                  <select value={f.assignedTo} onChange={(e) => setF({ ...f, assignedTo: e.target.value })} style={selStyle}>
+                    <option value="">Unassigned</option>
+                    {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                </div>
+              </div>
+              <div>
+                <div style={lblStyle}>Campaign</div>
+                <div style={{ position: "relative" }}>
+                  <select value={f.campaignId} onChange={(e) => setF({ ...f, campaignId: e.target.value })} style={selStyle}>
+                    <option value="">No campaign</option>
+                    {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={lblStyle}>Notes</div>
+            <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={3} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Call outcome, next steps, context…" />
+          </div>
+
+          {err && <div style={{ background: "#FDECEA", color: "#8E2A20", borderRadius: 8, padding: "9px 12px", fontSize: 13, marginBottom: 12 }}>{err}</div>}
+
+          <button onClick={saveLead} disabled={savingLead} className="tap" style={{ width: "100%", background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 10, padding: "12px", fontSize: 14.5, fontWeight: 600, cursor: "pointer", marginBottom: 6 }}>
+            {savingLead ? "Saving…" : leadSaved ? "Saved ✓" : "Save lead"}
+          </button>
+
+          <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: showLog ? 14 : 0 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6" }}>Log activity</div>
+              {!showLog && (
+                <button onClick={() => setShowLog(true)} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: INK, color: PAPER, border: "none", borderRadius: 8, padding: "8px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                  <Plus size={14} /> Log a call / email / appt
+                </button>
+              )}
+            </div>
+
+            {showLog && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div><div style={lblStyle}>Calls</div><input type="number" min="0" value={log.calls} onChange={(e) => setLog({ ...log, calls: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+                  <div><div style={lblStyle}>Emails</div><input type="number" min="0" value={log.emails} onChange={(e) => setLog({ ...log, emails: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+                  <div><div style={lblStyle}>Appts</div><input type="number" min="0" value={log.appts} onChange={(e) => setLog({ ...log, appts: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="0" /></div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div><div style={lblStyle}>Date</div><input type="date" value={log.date} onChange={(e) => setLog({ ...log, date: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+                  <div><div style={lblStyle}>Carrier Rep</div><input value={log.carrierRep} onChange={(e) => setLog({ ...log, carrierRep: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} placeholder="Name of carrier rep" /></div>
+                </div>
+
+                {isBDR && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={lblStyle}>Working for (Sales Rep)</div>
+                    <div style={{ position: "relative" }}>
+                      <select value={log.workingFor} onChange={(e) => setLog({ ...log, workingFor: e.target.value })} style={selStyle}>
+                        <option value="" disabled>Choose a Sales Rep…</option>
+                        <option value="self">Self-generated</option>
+                        {salesReps.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                    </div>
+                  </div>
+                )}
+
+                {showAppt && (
+                  <div style={{ background: "#EAF6FF", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: EMAIL, marginBottom: 8 }}>Appointment details (optional)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div><div style={lblStyle}>Date</div><input type="date" value={log.apptDate} onChange={(e) => setLog({ ...log, apptDate: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+                      <div><div style={lblStyle}>Time</div><input type="time" value={log.apptTime} onChange={(e) => setLog({ ...log, apptTime: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} /></div>
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <div style={lblStyle}>Timezone</div>
+                      <div style={{ position: "relative" }}>
+                        <select value={log.apptTz} onChange={(e) => setLog({ ...log, apptTz: e.target.value })} style={selStyle}>
+                          {US_TIMEZONES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                        </select>
+                        <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+                      </div>
+                    </div>
+                    <p style={{ fontSize: 12, color: EMAIL, opacity: 0.8, margin: "8px 0 0" }}>Logging an appointment creates an opportunity automatically.</p>
+                  </div>
+                )}
+
+                <div style={{ marginBottom: 12 }}>
+                  <div style={lblStyle}>Activity notes</div>
+                  <textarea value={log.notes} onChange={(e) => setLog({ ...log, notes: e.target.value })} rows={2} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="What happened on this touch?" />
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={submitLog} disabled={logging} className="tap" style={{ flex: 1, background: INK, color: PAPER, border: "none", borderRadius: 10, padding: "11px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>{logging ? "Logging…" : "Log activity"}</button>
+                  <button onClick={() => setShowLog(false)} className="tap" style={{ background: "transparent", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "11px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                </div>
+              </>
+            )}
+            {logDone && <div style={{ marginTop: 10, background: logDone.includes("✓") ? "#E7F6EC" : "#FDECEA", color: logDone.includes("✓") ? "#1B7A41" : "#8E2A20", borderRadius: 8, padding: "9px 12px", fontSize: 13 }}>{logDone}</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
   const role = effectiveUser.role;
   const canManageAll = role === "admin" || role === "management";
@@ -890,6 +1122,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
   const [showCampaigns, setShowCampaigns] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [selected, setSelected] = useState(() => new Set()); // bulk-selected lead ids
+  const [openLead, setOpenLead] = useState(null); // lead being worked in the detail panel
   const [busy, setBusy] = useState("");
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 820);
   useEffect(() => {
@@ -1046,7 +1279,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
                   {canManageAll && <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer", marginTop: 3 }} />}
                   <div style={{ minWidth: 0 }}>
-                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
+                    <button onClick={() => setOpenLead(l)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
                     {l.contact && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{l.contact}</div>}
                     {l.phone && <div style={{ fontSize: 13, opacity: 0.7 }}>{l.phone}</div>}
                   </div>
@@ -1117,7 +1350,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                     </td>
                   )}
                   <td style={{ padding: "10px 10px", fontWeight: 600 }}>
-                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
+                    <button onClick={() => setOpenLead(l)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
                   </td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.contact || "—"}</td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.phone || "—"}</td>
@@ -1167,6 +1400,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
       </div>
       )}
 
+      {openLead && <LeadDetailPanel lead={openLead} users={users} campaigns={campaigns} assignable={assignable} effectiveUser={effectiveUser} canManageAll={canManageAll} refetch={refetch} onOpenCompany={onOpenCompany} onClose={() => setOpenLead(null)} />}
       {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowUpload(false)} />}
       {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
       {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} assignable={assignable} refetch={refetch} onClose={() => setShowReport(false)} />}
