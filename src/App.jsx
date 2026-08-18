@@ -891,6 +891,12 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
   const [showReport, setShowReport] = useState(false);
   const [selected, setSelected] = useState(() => new Set()); // bulk-selected lead ids
   const [busy, setBusy] = useState("");
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= 820);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 820);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // People a lead can be assigned to = BDRs + Sales Reps in scope.
   const assignable = users.filter((u) => (u.role === "bdr" || SELLER_ROLES.includes(u.role)) && (canManageAll || visibleUserIds.includes(u.id)));
@@ -1029,18 +1035,74 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
         </div>
       )}
 
+      {isMobile ? (
+        /* Mobile: stacked cards — no horizontal scrolling */
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {filtered.length === 0 ? (
+            <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</div>
+          ) : filtered.map((l) => (
+            <div key={l.id} style={{ background: CARD, border: `1px solid ${selected.has(l.id) ? EMAIL : LINE_C}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
+                  {canManageAll && <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer", marginTop: 3 }} />}
+                  <div style={{ minWidth: 0 }}>
+                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
+                    {l.contact && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{l.contact}</div>}
+                    {l.phone && <div style={{ fontSize: 13, opacity: 0.7 }}>{l.phone}</div>}
+                  </div>
+                </div>
+                {(canManageAll || l.createdBy === effectiveUser.id) && (
+                  <button onClick={() => del(l)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4, flexShrink: 0 }}><Trash2 size={16} /></button>
+                )}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                {/* Status */}
+                <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
+                  style={{ appearance: "none", border: "none", borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg }}>
+                  {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
+                </select>
+                {/* Campaign */}
+                {canManageAll ? (
+                  <select value={l.campaignId || ""} onChange={(e) => setCampaign(l, e.target.value)}
+                    style={{ flex: "1 1 140px", appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}>
+                    <option value="">No campaign</option>
+                    {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (l.campaignId && <span style={{ fontSize: 12.5, alignSelf: "center", opacity: 0.7 }}>{campName(l.campaignId)}</span>)}
+                {/* Assigned */}
+                {canManageAll ? (
+                  <select value={l.assignedTo || ""} onChange={(e) => setAssignee(l, e.target.value)}
+                    style={{ flex: "1 1 140px", appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 12px", fontSize: 13, cursor: "pointer" }}>
+                    <option value="">Unassigned</option>
+                    {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                ) : (<span style={{ fontSize: 12.5, alignSelf: "center", opacity: 0.7 }}>{nameOf(l.assignedTo) || "Unassigned"}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 640, tableLayout: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
+            <colgroup>
+              {canManageAll && <col style={{ width: 34 }} />}
+              <col />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: 120 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 42 }} />
+            </colgroup>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
                 {canManageAll && (
-                  <th style={{ padding: "11px 14px", width: 36 }}>
+                  <th style={{ padding: "11px 10px" }}>
                     <input type="checkbox" checked={allShownSelected} onChange={toggleAllShown} style={{ cursor: "pointer" }} />
                   </th>
                 )}
                 {["Company", "Contact", "Phone", "Campaign", "Status", "Assigned to", ""].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                  <th key={h} style={{ textAlign: "left", padding: "11px 10px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -1050,50 +1112,50 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
               ) : filtered.map((l) => (
                 <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}`, background: selected.has(l.id) ? "#EEF5FF" : "transparent" }}>
                   {canManageAll && (
-                    <td style={{ padding: "10px 14px" }}>
+                    <td style={{ padding: "10px 10px" }}>
                       <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer" }} />
                     </td>
                   )}
-                  <td style={{ padding: "10px 14px", fontWeight: 600 }}>
+                  <td style={{ padding: "10px 10px", fontWeight: 600 }}>
                     <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
                   </td>
-                  <td style={{ padding: "10px 14px" }}>{l.contact || "—"}</td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.phone || "—"}</td>
-                  <td style={{ padding: "10px 14px" }}>
+                  <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.contact || "—"}</td>
+                  <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.phone || "—"}</td>
+                  <td style={{ padding: "10px 10px" }}>
                     {canManageAll ? (
                       <div style={{ position: "relative" }}>
                         <select value={l.campaignId || ""} onChange={(e) => setCampaign(l, e.target.value)}
-                          style={{ appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 26px 6px 10px", fontSize: 13, cursor: "pointer", maxWidth: 160 }}>
+                          style={{ width: "100%", appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 24px 6px 10px", fontSize: 12.5, cursor: "pointer", textOverflow: "ellipsis" }}>
                           <option value="">—</option>
                           {(campaigns || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                         </select>
-                        <ChevronDown size={13} style={{ position: "absolute", right: 8, top: 9, pointerEvents: "none", opacity: 0.5 }} />
+                        <ChevronDown size={13} style={{ position: "absolute", right: 7, top: 9, pointerEvents: "none", opacity: 0.5 }} />
                       </div>
                     ) : (
                       <span style={{ fontSize: 13 }}>{campName(l.campaignId) || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: "10px 14px" }}>
+                  <td style={{ padding: "10px 10px" }}>
                     <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
-                      style={{ appearance: "none", border: "none", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg }}>
+                      style={{ appearance: "none", border: "none", borderRadius: 20, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg, maxWidth: "100%" }}>
                       {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
                     </select>
                   </td>
-                  <td style={{ padding: "10px 14px" }}>
+                  <td style={{ padding: "10px 10px" }}>
                     {canManageAll ? (
                       <div style={{ position: "relative" }}>
                         <select value={l.assignedTo || ""} onChange={(e) => setAssignee(l, e.target.value)}
-                          style={{ appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 26px 6px 10px", fontSize: 13, cursor: "pointer" }}>
+                          style={{ width: "100%", appearance: "none", background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "6px 24px 6px 10px", fontSize: 12.5, cursor: "pointer", textOverflow: "ellipsis" }}>
                           <option value="">Unassigned</option>
                           {assignable.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                         </select>
-                        <ChevronDown size={13} style={{ position: "absolute", right: 8, top: 9, pointerEvents: "none", opacity: 0.5 }} />
+                        <ChevronDown size={13} style={{ position: "absolute", right: 7, top: 9, pointerEvents: "none", opacity: 0.5 }} />
                       </div>
                     ) : (
                       <span style={{ fontSize: 13 }}>{nameOf(l.assignedTo) || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                  <td style={{ padding: "10px 6px", textAlign: "center" }}>
                     {(canManageAll || l.createdBy === effectiveUser.id) && (
                       <button onClick={() => del(l)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={14} /></button>
                     )}
@@ -1102,8 +1164,8 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
               ))}
             </tbody>
           </table>
-        </div>
       </div>
+      )}
 
       {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowUpload(false)} />}
       {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
