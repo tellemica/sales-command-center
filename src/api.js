@@ -366,7 +366,7 @@ export async function clearUserGoal(userId) {
 const toCamelCompany = (c) => c && ({
   id: c.id, name: c.name, nameKey: c.name_key,
   website: c.website || "", phone: c.phone || "", address: c.address || "",
-  ban: c.ban || "", fan: c.fan || "", carrierRep: c.carrier_rep || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
+  ban: c.ban || "", fan: c.fan || "", carrierRep: c.carrier_rep || "", notes: c.notes || "", ownerId: c.owner_id || "", secondaryOwnerId: c.secondary_owner_id || "", isClient: !!c.is_client, createdBy: c.created_by, createdAt: c.created_at, updatedAt: c.updated_at,
 });
 
 export async function listCompanies() {
@@ -391,6 +391,7 @@ export async function updateCompany(id, patch) {
   if (patch.ownerId !== undefined) db.owner_id = patch.ownerId || null;
   if (patch.secondaryOwnerId !== undefined) db.secondary_owner_id = patch.secondaryOwnerId || null;
   if (patch.carrierRep !== undefined) db.carrier_rep = patch.carrierRep || null;
+  if (patch.isClient !== undefined) db.is_client = !!patch.isClient;
   if (patch.name !== undefined) db.name_key = patch.name.trim().toLowerCase();
   const { data, error } = await supabase.from("companies").update(db).eq("id", id).select().single();
   if (error) throw error;
