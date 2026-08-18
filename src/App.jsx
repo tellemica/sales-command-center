@@ -357,7 +357,26 @@ export default function App() {
   const [userGoals, setUserGoals] = useState({});   // per-person overrides { userId: {calls,emails,appts} }
   const [liveUser, setLiveUser] = useState(null);   // the signed-in user's profile
   const [viewAsId, setViewAsId] = useState("");      // admin "view as" impersonation (empty = self)
-  const [view, setView] = useState("dashboard");
+  const VALID_VIEWS = ["dashboard", "log", "companies", "contacts", "leads", "activity", "pipeline", "followups", "reports", "goals", "admin"];
+  const viewFromHash = () => {
+    const h = (typeof window !== "undefined" ? window.location.hash : "").replace(/^#\/?/, "");
+    return VALID_VIEWS.includes(h) ? h : "dashboard";
+  };
+  const [view, setViewRaw] = useState(viewFromHash);
+  // Wrap setView so changing tabs also updates the URL hash (adds a history entry,
+  // so refresh restores the tab and the back button walks tab history).
+  const setView = (v) => {
+    setViewRaw(v);
+    if (typeof window !== "undefined" && viewFromHash() !== v) {
+      window.location.hash = v;
+    }
+  };
+  // Keep view in sync when the user uses the browser back/forward buttons.
+  useEffect(() => {
+    const onHash = () => setViewRaw(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [search, setSearch] = useState("");
   const [companies, setCompanies] = useState([]);
