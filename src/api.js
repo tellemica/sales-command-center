@@ -509,6 +509,27 @@ export async function deleteEntityNote(id) {
   if (error) throw error;
 }
 
+// Roll up every timestamped note tied to a company: its deals' notes, its
+// contacts' notes, and (from a passed-in list) its leads' notes — merged with
+// company_notes into one timeline. Caller passes the related ids since leads
+// link by company name, not id.
+export async function listCompanyNoteRollup(companyId, { dealIds = [], contactIds = [], leadIds = [] } = {}) {
+  const ids = [...dealIds, ...contactIds, ...leadIds];
+  const out = [];
+  if (ids.length) {
+    const { data, error } = await supabase.from("entity_notes").select("*").in("entity_id", ids).order("created_at", { ascending: false });
+    if (error) throw error;
+    (data || []).forEach((n) => out.push({ id: n.id, source: n.entity_type, authorId: n.author_id, body: n.body, createdAt: n.created_at }));
+  }
+  // Company-level notes too.
+  const { data: cn, error: cnErr } = await supabase.from("company_notes").select("*").eq("company_id", companyId).order("created_at", { ascending: false });
+  if (cnErr) throw cnErr;
+  (cn || []).forEach((n) => out.push({ id: n.id, source: "company", authorId: n.author_id, body: n.body, createdAt: n.created_at }));
+  // Newest first across everything.
+  out.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return out;
+}
+
 // ---- Attachments (Storage bucket: company-files) ----
 const toCamelAttachment = (a) => a && ({ id: a.id, companyId: a.company_id, noteId: a.note_id || null, uploaderId: a.uploader_id, fileName: a.file_name, storagePath: a.storage_path, sizeBytes: a.size_bytes || 0, createdAt: a.created_at });
 
