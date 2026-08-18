@@ -699,6 +699,7 @@ export default function App() {
             leads={leads}
             campaigns={campaigns}
             users={users}
+            entries={entries}
             effectiveUser={effectiveUser}
             visibleUserIds={visibleUserIds}
             refetch={refetch}
@@ -882,9 +883,17 @@ const LEAD_STATUS_META = {
 // ---- Lead detail panel: work a lead without leaving the Leads tab ----
 // Edit the lead's fields AND log full activity (call/email/appt) against it.
 // Appointments create an opportunity, same as the main Log Activity screen.
-function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, canManageAll, refetch, onOpenCompany, onClose }) {
+function LeadDetailPanel({ lead, users, campaigns, entries, assignable, effectiveUser, canManageAll, refetch, onOpenCompany, onClose }) {
   const isBDR = effectiveUser.role === "bdr";
   const salesReps = (users || []).filter((u) => u.role === "sales");
+  const repName = (id) => { const u = (users || []).find((x) => x.id === id); return u ? u.name : ""; };
+  // Full activity history for this account (all reps' touches), newest first.
+  const history = useMemo(() => {
+    const key = (lead.company || "").trim().toLowerCase();
+    return (entries || [])
+      .filter((e) => (e.company || "").trim().toLowerCase() === key)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || ""));
+  }, [entries, lead.company]);
 
   // Editable lead fields
   const [f, setF] = useState({
@@ -968,8 +977,8 @@ function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, ca
   const showAppt = (+log.appts || 0) >= 1;
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "flex", justifyContent: "flex-end", zIndex: 60 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, height: "100%", width: "min(560px, 100vw)", overflowY: "auto", boxShadow: "-8px 0 30px rgba(0,0,0,.15)" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: PAPER, borderRadius: 16, width: "min(560px, 96vw)", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
         <div style={{ position: "sticky", top: 0, background: PAPER, borderBottom: `1px solid ${LINE_C}`, padding: "18px 22px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", zIndex: 2 }}>
           <div style={{ minWidth: 0 }}>
             <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: 0 }}>{lead.company}</h2>
@@ -1129,13 +1138,44 @@ function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, ca
             )}
             {logDone && <div style={{ marginTop: 10, background: logDone.includes("✓") ? "#E7F6EC" : "#FDECEA", color: logDone.includes("✓") ? "#1B7A41" : "#8E2A20", borderRadius: 8, padding: "9px 12px", fontSize: 13 }}>{logDone}</div>}
           </div>
+
+          {/* ---- Account history: every prior touch, newest first ---- */}
+          <div style={{ borderTop: `1px solid ${LINE_C}`, margin: "20px 0 0", paddingTop: 18 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 10 }}>
+              Account history {history.length > 0 && <span style={{ opacity: 0.6 }}>· {history.length}</span>}
+            </div>
+            {history.length === 0 ? (
+              <p style={{ fontSize: 13, opacity: 0.5, margin: 0 }}>No activity logged on this account yet. Log a call, email, or appointment above to start the record.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {history.map((e) => {
+                  const bits = [];
+                  if (e.calls) bits.push(`${e.calls} call${e.calls > 1 ? "s" : ""}`);
+                  if (e.emails) bits.push(`${e.emails} email${e.emails > 1 ? "s" : ""}`);
+                  if (e.appts) bits.push(`${e.appts} appt${e.appts > 1 ? "s" : ""}`);
+                  return (
+                    <div key={e.id} style={{ background: "#F7FAFC", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "10px 12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginBottom: e.notes ? 5 : 0 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700 }}>{bits.length ? bits.join(" · ") : "Activity"}</span>
+                        <span style={{ fontSize: 11.5, opacity: 0.55, whiteSpace: "nowrap" }}>{fmtReportDate(e.date)}</span>
+                      </div>
+                      {e.notes && <div style={{ fontSize: 13, lineHeight: 1.45, marginBottom: 5 }}>{e.notes}</div>}
+                      <div style={{ fontSize: 11.5, opacity: 0.5 }}>
+                        {repName(e.userId) || "Someone"}{e.bdrId && e.bdrId !== e.userId ? ` · BDR: ${repName(e.bdrId) || "?"}` : ""}{e.carrierRep ? ` · carrier: ${e.carrierRep}` : ""}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
+function LeadsView({ leads, campaigns, users, entries, effectiveUser, visibleUserIds, refetch, onOpenCompany }) {
   const role = effectiveUser.role;
   const canManageAll = role === "admin" || role === "management";
   const [q, setQ] = useState("");
@@ -1160,6 +1200,18 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
   const assignable = users.filter((u) => (u.role === "bdr" || SELLER_ROLES.includes(u.role)) && (canManageAll || visibleUserIds.includes(u.id)));
   const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
   const campName = (id) => { const c = (campaigns || []).find((x) => x.id === id); return c ? c.name : ""; };
+  // Index activity by lowercased company name → newest activity date, for the
+  // "last activity" column and to feed the panel's history.
+  const activityByCompany = useMemo(() => {
+    const m = {};
+    (entries || []).forEach((e) => {
+      const key = (e.company || "").trim().toLowerCase();
+      if (!key) return;
+      if (!m[key] || (e.date || "") > (m[key] || "")) m[key] = e.date || "";
+    });
+    return m;
+  }, [entries]);
+  const lastActivity = (l) => activityByCompany[(l.company || "").trim().toLowerCase()] || "";
 
   const filtered = leads.filter((l) => {
     if (q && !(`${l.company} ${l.contact} ${l.email}`.toLowerCase().includes(q.trim().toLowerCase()))) return false;
@@ -1193,6 +1245,10 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
   const setAssignee = async (lead, assignedTo) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { assignedTo }); await refetch(); } finally { setBusy(""); } };
   const setCampaign = async (lead, campaignId) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { campaignId }); await refetch(); } finally { setBusy(""); } };
   const del = async (lead) => { if (confirm(`Delete lead "${lead.company}"?`)) { await api.deleteLead(lead.id); await refetch(); } };
+
+  // Count and jump to the next lead (in current sort/filter) with no activity yet.
+  const unworked = sorted.filter((l) => !lastActivity(l));
+  const jumpToNextUnworked = () => { if (unworked.length) setOpenLead(unworked[0]); };
 
   // ---- Bulk selection ----
   const toggleOne = (id) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1228,6 +1284,12 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {unworked.length > 0 && (
+            <button onClick={jumpToNextUnworked} className="tap"
+              style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+              <ArrowRight size={14} /> Work next lead <span style={{ opacity: 0.6, fontWeight: 500 }}>({unworked.length})</span>
+            </button>
+          )}
           {canManageAll && (
             <button onClick={() => setShowReport(true)} className="tap"
               style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 14px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
@@ -1334,6 +1396,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                     </div>
                     {l.contact && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{l.contact}</div>}
                     {l.phone && <div style={{ fontSize: 13, opacity: 0.7 }}>{l.phone}</div>}
+                    {lastActivity(l) ? <div style={{ fontSize: 11.5, opacity: 0.5, marginTop: 2 }}>Last touched {fmtReportDate(lastActivity(l))}</div> : <div style={{ fontSize: 11.5, marginTop: 2, color: "#B4453F", opacity: 0.7 }}>Not yet worked</div>}
                   </div>
                 </div>
                 {(canManageAll || l.createdBy === effectiveUser.id) && (
@@ -1406,6 +1469,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                       {l.starred && <Star size={13} fill="#F5A623" color="#F5A623" style={{ flexShrink: 0 }} />}
                       <span style={{ color: EMAIL }}>{l.company}</span>
                     </span>
+                    {lastActivity(l) ? <span style={{ fontSize: 11, opacity: 0.5, fontWeight: 500 }}>Last touched {fmtReportDate(lastActivity(l))}</span> : <span style={{ fontSize: 11, opacity: 0.45, fontWeight: 500, color: "#B4453F" }}>Not yet worked</span>}
                   </td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.contact || "—"}</td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.phone || "—"}</td>
@@ -1455,7 +1519,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
       </div>
       )}
 
-      {openLead && <LeadDetailPanel lead={openLead} users={users} campaigns={campaigns} assignable={assignable} effectiveUser={effectiveUser} canManageAll={canManageAll} refetch={refetch} onOpenCompany={onOpenCompany} onClose={() => setOpenLead(null)} />}
+      {openLead && <LeadDetailPanel lead={openLead} users={users} campaigns={campaigns} entries={entries} assignable={assignable} effectiveUser={effectiveUser} canManageAll={canManageAll} refetch={refetch} onOpenCompany={onOpenCompany} onClose={() => setOpenLead(null)} />}
       {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowUpload(false)} />}
       {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
       {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} assignable={assignable} refetch={refetch} onClose={() => setShowReport(false)} />}
