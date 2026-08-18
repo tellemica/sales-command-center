@@ -890,7 +890,7 @@ function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, ca
   const [f, setF] = useState({
     status: lead.status || "new", contact: lead.contact || "", phone: lead.phone || "",
     email: lead.email || "", notes: lead.notes || "", nextActionDate: lead.nextActionDate || "",
-    assignedTo: lead.assignedTo || "", campaignId: lead.campaignId || "",
+    assignedTo: lead.assignedTo || "", campaignId: lead.campaignId || "", starred: !!lead.starred,
   });
   const [savingLead, setSavingLead] = useState(false);
   const [leadSaved, setLeadSaved] = useState(false);
@@ -911,13 +911,26 @@ function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, ca
     try {
       await api.updateLead(lead.id, {
         status: f.status, contact: f.contact.trim(), phone: f.phone.trim(), email: f.email.trim(),
-        notes: f.notes.trim(), nextActionDate: f.nextActionDate || null,
+        notes: f.notes.trim(), nextActionDate: f.nextActionDate || null, starred: f.starred,
         ...(canManageAll ? { assignedTo: f.assignedTo || null, campaignId: f.campaignId || null } : {}),
       });
       await refetch();
       setLeadSaved(true); setTimeout(() => setLeadSaved(false), 1800);
     } catch (e) { setErr(e?.message || "Could not save the lead."); }
     finally { setSavingLead(false); }
+  };
+
+  // Toggle the important-star and persist immediately (no full save needed).
+  const toggleStar = async () => {
+    const val = !f.starred;
+    setF((p) => ({ ...p, starred: val }));
+    try { await api.updateLead(lead.id, { starred: val }); await refetch(); } catch (e) { setF((p) => ({ ...p, starred: !val })); }
+  };
+
+  // Advance/set status via the tap-through buttons; persists immediately.
+  const setStatusNow = async (s) => {
+    setF((p) => ({ ...p, status: s }));
+    try { await api.updateLead(lead.id, { status: s }); await refetch(); } catch (e) { /* revert on failure */ setF((p) => ({ ...p, status: lead.status })); }
   };
 
   const submitLog = async () => {
@@ -962,26 +975,37 @@ function LeadDetailPanel({ lead, users, campaigns, assignable, effectiveUser, ca
             <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: 0 }}>{lead.company}</h2>
             <button onClick={() => { onClose(); onOpenCompany(lead.company); }} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontSize: 12.5, fontWeight: 600, cursor: "pointer", padding: "4px 0 0" }}>Open full company page →</button>
           </div>
-          <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5, flexShrink: 0 }}><X size={20} /></button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+            <button onClick={toggleStar} className="tap" title={f.starred ? "Unmark important" : "Mark important"} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 4, display: "grid", placeItems: "center" }}>
+              <Star size={22} fill={f.starred ? "#F5A623" : "none"} color={f.starred ? "#F5A623" : "#B4C0CC"} />
+            </button>
+            <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.5 }}><X size={20} /></button>
+          </div>
         </div>
 
         <div style={{ padding: 22 }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 10 }}>Lead details</div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <div>
-              <div style={lblStyle}>Status</div>
-              <div style={{ position: "relative" }}>
-                <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} style={selStyle}>
-                  {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
-                </select>
-                <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
-              </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={lblStyle}>Status — tap to advance</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {LEAD_STATUSES.map((s) => {
+                const on = f.status === s;
+                const meta = LEAD_STATUS_META[s];
+                return (
+                  <button key={s} onClick={() => setStatusNow(s)} className="tap"
+                    style={{ flex: "1 1 auto", border: on ? `1.5px solid ${meta.color}` : `1px solid ${LINE_C}`, background: on ? meta.bg : "#fff", color: on ? meta.color : "#5A6B7B", borderRadius: 9, padding: "9px 6px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {meta.label}
+                  </button>
+                );
+              })}
             </div>
-            <div>
-              <div style={lblStyle}>Next action date</div>
-              <input type="date" value={f.nextActionDate ? f.nextActionDate.slice(0,10) : ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={{ ...inputStyle, marginBottom: 0 }} />
-            </div>
+          </div>
+
+          <div style={{ marginBottom: 12 }}>
+            <div style={lblStyle}>Follow-up reminder date</div>
+            <input type="date" value={f.nextActionDate ? f.nextActionDate.slice(0,10) : ""} onChange={(e) => setF({ ...f, nextActionDate: e.target.value })} style={{ ...inputStyle, marginBottom: 4 }} />
+            <p style={{ fontSize: 11.5, opacity: 0.55, margin: 0 }}>Set a date to get reminded in Follow-ups. {f.starred ? "This lead is also starred as important." : "Star the lead (top-right) to flag it important."}</p>
           </div>
 
           <div style={{ marginBottom: 12 }}>
@@ -1118,6 +1142,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
   const [statusFilter, setStatusFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("status"); // status | starred | company | recent
   const [showUpload, setShowUpload] = useState(false);
   const [showCampaigns, setShowCampaigns] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -1148,6 +1173,20 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
       if (assigneeFilter !== "unassigned" && l.assignedTo !== assigneeFilter) return false;
     }
     return true;
+  });
+
+  // Sort. Status order follows the workflow (new first). Starred always floats
+  // to the very top within whichever sort is active.
+  const statusRank = (s) => { const i = LEAD_STATUSES.indexOf(s); return i === -1 ? 99 : i; };
+  const sorted = [...filtered].sort((a, b) => {
+    if (sortBy === "starred") { if (!!b.starred !== !!a.starred) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0); }
+    else if (a.starred !== b.starred) return (b.starred ? 1 : 0) - (a.starred ? 1 : 0);
+    if (sortBy === "company") return (a.company || "").localeCompare(b.company || "");
+    if (sortBy === "recent") return (b.createdAt || "").localeCompare(a.createdAt || "");
+    // default "status": new -> contacted -> qualified -> converted -> dead
+    const r = statusRank(a.status) - statusRank(b.status);
+    if (r !== 0) return r;
+    return (a.company || "").localeCompare(b.company || "");
   });
 
   const setStatus = async (lead, status) => { setBusy("Saving…"); try { await api.updateLead(lead.id, { status }); await refetch(); } finally { setBusy(""); } };
@@ -1241,6 +1280,16 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
           </select>
           <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
         </div>
+        <div style={{ position: "relative" }}>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}
+            style={{ appearance: "none", background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 34px 10px 14px", fontSize: 14, cursor: "pointer" }}>
+            <option value="status">Sort: New first</option>
+            <option value="starred">Sort: Starred first</option>
+            <option value="company">Sort: Company A–Z</option>
+            <option value="recent">Sort: Newest added</option>
+          </select>
+          <ChevronDown size={15} style={{ position: "absolute", right: 12, top: 12, pointerEvents: "none", opacity: 0.5 }} />
+        </div>
       </div>
 
       {canManageAll && selected.size > 0 && (
@@ -1273,22 +1322,25 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filtered.length === 0 ? (
             <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</div>
-          ) : filtered.map((l) => (
-            <div key={l.id} style={{ background: CARD, border: `1px solid ${selected.has(l.id) ? EMAIL : LINE_C}`, borderRadius: 12, padding: 14 }}>
+          ) : sorted.map((l) => (
+            <div key={l.id} onClick={() => setOpenLead(l)} className="tap" style={{ background: CARD, border: `1px solid ${selected.has(l.id) ? EMAIL : LINE_C}`, borderRadius: 12, padding: 14, cursor: "pointer" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
-                  {canManageAll && <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer", marginTop: 3 }} />}
+                  {canManageAll && <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} onClick={(e) => e.stopPropagation()} style={{ cursor: "pointer", marginTop: 3 }} />}
                   <div style={{ minWidth: 0 }}>
-                    <button onClick={() => setOpenLead(l)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 700, fontSize: 15, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {l.starred && <Star size={14} fill="#F5A623" color="#F5A623" style={{ flexShrink: 0 }} />}
+                      <span style={{ color: EMAIL, fontWeight: 700, fontSize: 15 }}>{l.company}</span>
+                    </div>
                     {l.contact && <div style={{ fontSize: 13, opacity: 0.7, marginTop: 2 }}>{l.contact}</div>}
                     {l.phone && <div style={{ fontSize: 13, opacity: 0.7 }}>{l.phone}</div>}
                   </div>
                 </div>
                 {(canManageAll || l.createdBy === effectiveUser.id) && (
-                  <button onClick={() => del(l)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4, flexShrink: 0 }}><Trash2 size={16} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); del(l); }} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4, flexShrink: 0 }}><Trash2 size={16} /></button>
                 )}
               </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }} onClick={(e) => e.stopPropagation()}>
                 {/* Status */}
                 <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
                   style={{ appearance: "none", border: "none", borderRadius: 20, padding: "6px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg }}>
@@ -1342,19 +1394,22 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={canManageAll ? 8 : 7} style={{ padding: 28, textAlign: "center", opacity: 0.5 }}>No leads{leads.length ? " match your filters" : " yet — upload a lead list to get started"}.</td></tr>
-              ) : filtered.map((l) => (
-                <tr key={l.id} style={{ borderTop: `1px solid ${LINE_C}`, background: selected.has(l.id) ? "#EEF5FF" : "transparent" }}>
+              ) : sorted.map((l) => (
+                <tr key={l.id} onClick={() => setOpenLead(l)} className="tap" style={{ borderTop: `1px solid ${LINE_C}`, background: selected.has(l.id) ? "#EEF5FF" : "transparent", cursor: "pointer" }}>
                   {canManageAll && (
-                    <td style={{ padding: "10px 10px" }}>
+                    <td style={{ padding: "10px 10px" }} onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer" }} />
                     </td>
                   )}
                   <td style={{ padding: "10px 10px", fontWeight: 600 }}>
-                    <button onClick={() => setOpenLead(l)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {l.starred && <Star size={13} fill="#F5A623" color="#F5A623" style={{ flexShrink: 0 }} />}
+                      <span style={{ color: EMAIL }}>{l.company}</span>
+                    </span>
                   </td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.contact || "—"}</td>
                   <td style={{ padding: "10px 10px", overflow: "hidden", textOverflow: "ellipsis" }}>{l.phone || "—"}</td>
-                  <td style={{ padding: "10px 10px" }}>
+                  <td style={{ padding: "10px 10px" }} onClick={(e) => e.stopPropagation()}>
                     {canManageAll ? (
                       <div style={{ position: "relative" }}>
                         <select value={l.campaignId || ""} onChange={(e) => setCampaign(l, e.target.value)}
@@ -1368,13 +1423,13 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                       <span style={{ fontSize: 13 }}>{campName(l.campaignId) || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: "10px 10px" }}>
+                  <td style={{ padding: "10px 10px" }} onClick={(e) => e.stopPropagation()}>
                     <select value={l.status} onChange={(e) => setStatus(l, e.target.value)}
                       style={{ appearance: "none", border: "none", borderRadius: 20, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: LEAD_STATUS_META[l.status].color, background: LEAD_STATUS_META[l.status].bg, maxWidth: "100%" }}>
                       {LEAD_STATUSES.map((s) => <option key={s} value={s}>{LEAD_STATUS_META[s].label}</option>)}
                     </select>
                   </td>
-                  <td style={{ padding: "10px 10px" }}>
+                  <td style={{ padding: "10px 10px" }} onClick={(e) => e.stopPropagation()}>
                     {canManageAll ? (
                       <div style={{ position: "relative" }}>
                         <select value={l.assignedTo || ""} onChange={(e) => setAssignee(l, e.target.value)}
@@ -1388,7 +1443,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                       <span style={{ fontSize: 13 }}>{nameOf(l.assignedTo) || "—"}</span>
                     )}
                   </td>
-                  <td style={{ padding: "10px 6px", textAlign: "center" }}>
+                  <td style={{ padding: "10px 6px", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                     {(canManageAll || l.createdBy === effectiveUser.id) && (
                       <button onClick={() => del(l)} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer", opacity: 0.4 }}><Trash2 size={14} /></button>
                     )}
