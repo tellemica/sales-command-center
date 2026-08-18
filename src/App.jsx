@@ -1105,7 +1105,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
         </div>
       </div>
 
-      {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} refetch={refetch} onClose={() => setShowUpload(false)} />}
+      {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowUpload(false)} />}
       {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
       {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} onClose={() => setShowReport(false)} />}
     </>
@@ -1138,6 +1138,33 @@ function CampaignManager({ campaigns, leads, refetch, onClose }) {
     setBusy("Deleting…"); try { await api.deleteCampaign(c.id); await refetch(); } finally { setBusy(""); }
   };
 
+  // ---- Bulk campaign upload ----
+  const campFileRef = React.useRef(null);
+  const downloadCampTemplate = () => {
+    const example = [{ "Campaign Name": "AT&T Q3 Fiber Push", Vendor: "AT&T" }, { "Campaign Name": "Verizon SMB Blitz", Vendor: "Verizon" }, { "Campaign Name": "", Vendor: "" }];
+    const ws = XLSX.utils.json_to_sheet(example, { header: ["Campaign Name", "Vendor"] });
+    ws["!cols"] = [{ wch: 30 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Campaigns");
+    XLSX.writeFile(wb, "tellemica-campaigns-template.xlsx");
+  };
+  const onCampFile = async (file) => {
+    setBusy("Reading…"); setErr("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+      const camps = raw.map((r) => ({ name: String(r["Campaign Name"] || r["Name"] || "").trim(), vendor: String(r["Vendor"] || "").trim() })).filter((c) => c.name);
+      if (camps.length === 0) { setErr("No campaign names found in that file. Use the template's “Campaign Name” column."); setBusy(""); return; }
+      const { created, skipped } = await api.bulkCreateCampaigns(camps);
+      await refetch();
+      setErr("");
+      setBusy("");
+      alert(`Done — ${created} campaign${created === 1 ? "" : "s"} created${skipped ? `, ${skipped} skipped (already existed)` : ""}.`);
+    } catch (e) { setErr("Upload failed: " + (e?.message || "")); setBusy(""); }
+    finally { if (campFileRef.current) campFileRef.current.value = ""; }
+  };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD, borderRadius: 16, padding: 24, width: "min(640px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
@@ -1156,6 +1183,12 @@ function CampaignManager({ campaigns, leads, refetch, onClose }) {
           <input value={vendor} onChange={(e) => setVendor(e.target.value)} style={{ ...inputStyle, marginBottom: 0 }} placeholder="AT&T" />
         </div>
         <button onClick={create} disabled={!!busy} className="tap" style={{ background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "11px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>Add</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${LINE_C}` }}>
+        <span style={{ fontSize: 12.5, opacity: 0.55 }}>Or add many at once:</span>
+        <button onClick={downloadCampTemplate} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}><Download size={14} /> Template</button>
+        <button onClick={() => campFileRef.current && campFileRef.current.click()} className="tap" style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 8, padding: "7px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}><FileSpreadsheet size={14} /> Upload campaigns</button>
+        <input ref={campFileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onCampFile(f); }} />
       </div>
       {err && <p style={{ color: "#B4453F", fontSize: 13, margin: "0 0 12px" }}>{err}</p>}
       {busy && <p style={{ color: CALL, fontSize: 13, margin: "0 0 12px" }}>{busy}</p>}
@@ -1382,15 +1415,35 @@ function CampaignReport({ campaigns, leads, users, onClose }) {
   );
 }
 
-function LeadUpload({ users, assignable, campaigns, refetch, onClose }) {
+function LeadUpload({ users, assignable, campaigns, leads, refetch, onClose }) {
   const [rows, setRows] = useState(null);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
   const fileRef = React.useRef(null);
   const COLS = ["Company", "Contact", "Phone", "Email", "BAN", "FAN", "Assign To", "Campaign", "Status", "Notes"];
+  // Export includes a leading "Lead ID" column so an edited re-upload updates in
+  // place. New rows (blank ID) are inserted. Keep "Lead ID" as the first column.
+  const EXPORT_COLS = ["Lead ID", ...COLS];
+  const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+  const campNameOf = (id) => { const c = (campaigns || []).find((x) => x.id === id); return c ? c.name : ""; };
 
   const matchUser = (name) => { const n = (name || "").trim().toLowerCase(); if (!n) return null; return assignable.find((u) => u.name.trim().toLowerCase() === n) || null; };
+
+  // Export current leads to an editable sheet (with Lead ID for in-place updates).
+  const exportLeads = () => {
+    const data = (leads || []).map((l) => ({
+      "Lead ID": l.id,
+      Company: l.company || "", Contact: l.contact || "", Phone: l.phone || "", Email: l.email || "",
+      BAN: l.ban || "", FAN: l.fan || "", "Assign To": nameOf(l.assignedTo) || "",
+      Campaign: campNameOf(l.campaignId) || "", Status: l.status || "new", Notes: l.notes || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data, { header: EXPORT_COLS });
+    ws["!cols"] = [{ wch: 38 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 34 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    XLSX.writeFile(wb, `tellemica-leads-export-${CURRENT_MONTH}.xlsx`);
+  };
 
   const downloadTemplate = async () => {
     const example = { Company: "Acme Corp", Contact: "Jane Smith", Phone: "(610) 555-0100", Email: "jane@acme.com", BAN: "123456789", FAN: "987654321", "Assign To": (assignable[0] && assignable[0].name) || "", Campaign: (campaigns[0] && campaigns[0].name) || "AT&T Q3 Fiber Push", Status: "new", Notes: "Referred by partner" };
@@ -1447,8 +1500,9 @@ function LeadUpload({ users, assignable, campaigns, refetch, onClose }) {
       let status = String(r["Status"] || "new").trim().toLowerCase();
       if (!LEAD_STATUSES.includes(status)) { if (status) errors.push(`"Status" — "${status}" isn't valid`); status = "new"; }
       const campaignName = String(r["Campaign"] || "").trim();
+      const id = String(r["Lead ID"] || "").trim();
       return {
-        _row: i + 2, errors, company, contact: String(r["Contact"] || "").trim(), phone: String(r["Phone"] || "").trim(),
+        _row: i + 2, errors, id, company, contact: String(r["Contact"] || "").trim(), phone: String(r["Phone"] || "").trim(),
         email: String(r["Email"] || "").trim(), ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(),
         notes: String(r["Notes"] || "").trim(), assignedTo, status, campaignName,
         assigneeName: assignedTo ? (assignable.find((u) => u.id === assignedTo) || {}).name : "Unassigned",
@@ -1471,12 +1525,18 @@ function LeadUpload({ users, assignable, campaigns, refetch, onClose }) {
         const key = (r.campaignName || "").trim().toLowerCase();
         if (key && !campCache[key]) { campCache[key] = await api.findOrCreateCampaign(r.campaignName.trim()); }
       }
-      await api.addLeadsBulk(valid.map((r) => ({
+      const payload = valid.map((r) => ({
+        ...(r.id ? { id: r.id } : {}),
         company: r.company, contact: r.contact, phone: r.phone, email: r.email, ban: r.ban, fan: r.fan,
         notes: r.notes, status: r.status, assignedTo: r.assignedTo,
         campaignId: r.campaignName ? campCache[r.campaignName.trim().toLowerCase()] : null,
-      })));
-      await refetch(); setDone(`Imported ${valid.length} ${valid.length === 1 ? "lead" : "leads"}.`); setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
+      }));
+      // Upsert handles both: rows with a Lead ID update in place, blank ones insert.
+      const { updated, inserted } = await api.upsertLeadsFromUpload(payload);
+      const parts = [];
+      if (inserted) parts.push(`${inserted} added`);
+      if (updated) parts.push(`${updated} updated`);
+      await refetch(); setDone(parts.length ? `Done — ${parts.join(", ")}.` : "No changes."); setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
     } catch (e) { setDone("Import failed: " + (e.message || "")); } finally { setBusy(false); }
   };
 
@@ -1487,9 +1547,10 @@ function LeadUpload({ users, assignable, campaigns, refetch, onClose }) {
           <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 21, fontWeight: 600, margin: 0 }}>Upload leads</h3>
           <button onClick={onClose} className="tap" style={{ background: "transparent", border: "none", cursor: "pointer" }}><X size={20} /></button>
         </div>
-        <p style={{ margin: "0 0 16px", fontSize: 13.5, opacity: 0.6, lineHeight: 1.5 }}>Download the template, fill in one row per lead, then upload. You can assign during upload or from the Leads list afterward.</p>
+        <p style={{ margin: "0 0 16px", fontSize: 13.5, opacity: 0.6, lineHeight: 1.5 }}>Download the blank template to add new leads, or export your current leads to edit them (assignment, campaign, status, notes) and re-upload. Rows keep their <b>Lead ID</b> update in place; blank-ID rows are added as new.</p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-          <button onClick={downloadTemplate} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><Download size={15} /> Download template</button>
+          <button onClick={downloadTemplate} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><Download size={15} /> Blank template</button>
+          <button onClick={exportLeads} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><Download size={15} /> Export current leads</button>
           <button onClick={() => fileRef.current && fileRef.current.click()} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: `linear-gradient(90deg, ${BTN_A}, ${BTN_B})`, color: "#fff", border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}><FileSpreadsheet size={15} /> Choose Excel file</button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }} />
         </div>
