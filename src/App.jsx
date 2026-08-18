@@ -675,6 +675,7 @@ export default function App() {
               canSeeCompany={canSeeCompany}
               entries={visibleEntries}
               deals={visibleDeals}
+              leads={leads}
               users={users}
               effectiveUser={effectiveUser}
               saveDeals={saveDeals}
@@ -1165,10 +1166,9 @@ function LeadDetailPanel({ lead, users, campaigns, entries, contacts, assignable
         </div>
       )}
       <div style={{ marginBottom: 4 }}>
-        <div style={lblStyle}>Lead notes</div>
-        <textarea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} rows={3} style={{ ...inputStyle, marginBottom: 0, resize: "vertical", fontFamily: "inherit" }} placeholder="Summary / context for this lead…" />
+        <div style={lblStyle}>Notes</div>
+        <EntityNotes entityType="lead" entityId={lead.id} users={users} effectiveUser={effectiveUser} compact />
       </div>
-      <p style={{ fontSize: 11.5, opacity: 0.5, margin: "6px 0 0" }}>Edits here are saved with the “Save & log” button.</p>
     </div>
   );
 
@@ -2224,7 +2224,7 @@ function CompaniesList({ companies, entries, deals, onOpen, refetch }) {
 }
 
 // ---- CRM: Company detail page (Overview, Activities, Deals, Contacts, Notes, Attachments) ----
-function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, users, effectiveUser, saveDeals, visibleUserIds, onBack, onOpenCompany, refetch }) {
+function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, leads, users, effectiveUser, saveDeals, visibleUserIds, onBack, onOpenCompany, refetch }) {
   const company = companies.find((c) => c.id === companyId);
   // Guard: a rep who reaches a company outside their scope (stale link, search)
   // sees an access notice instead of another rep's account.
@@ -2232,6 +2232,8 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
   const [tab, setTab] = useState("overview");
   const [contacts, setContacts] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [rollup, setRollup] = useState([]);
+  const allLeads = leads || [];
   const [attachments, setAttachments] = useState([]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(company || {});
@@ -2253,6 +2255,16 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
     try {
       const [cs, ns, as] = await Promise.all([api.listContacts(companyId), api.listCompanyNotes(companyId), api.listAttachments(companyId)]);
       setContacts(cs); setNotes(ns); setAttachments(as);
+      // Roll up all timestamped notes across this company's deals, contacts, and
+      // leads (leads matched by company name) plus company notes, into one timeline.
+      try {
+        const dealIds = companyDeals.map((d) => d.id);
+        const contactIds = cs.map((c) => c.id);
+        const nameKey = (company?.name || "").trim().toLowerCase();
+        const leadIds = (allLeads || []).filter((l) => (l.company || "").trim().toLowerCase() === nameKey).map((l) => l.id);
+        const roll = await api.listCompanyNoteRollup(companyId, { dealIds, contactIds, leadIds });
+        setRollup(roll);
+      } catch { setRollup([]); }
     } catch (e) { /* surfaced per-action */ }
   };
   useEffect(() => { setDraft(company || {}); loadSub(); /* eslint-disable-next-line */ }, [companyId]);
@@ -2274,6 +2286,7 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
     ["deals", `Deals (${companyDeals.length})`, Briefcase],
     ["contacts", `Contacts (${contacts.length})`, Users],
     ["notes", `Notes (${notes.length})`, Pencil],
+    ["history", `All notes (${rollup.length})`, Clock],
     ["attachments", `Files (${attachments.length})`, FileSpreadsheet],
   ];
 
@@ -2471,6 +2484,28 @@ function CompanyDetail({ companyId, companies, canSeeCompany, entries, deals, us
 
       {/* NOTES */}
       {tab === "notes" && <NotesSection companyId={companyId} notes={notes} nameOf={nameOf} effectiveUser={effectiveUser} reload={loadSub} />}
+      {tab === "history" && (
+        <Panel title="All notes for this company" icon={Clock}>
+          <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 14px" }}>Every timestamped note across this company — its leads, deals, contacts, and company notes — newest first.</p>
+          {rollup.length === 0 ? <Empty msg="No notes anywhere for this company yet." /> : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {rollup.map((n) => {
+                const label = { lead: "Lead", deal: "Deal", contact: "Contact", campaign: "Campaign", company: "Company" }[n.source] || "Note";
+                const color = { lead: "#1854BB", deal: "#0B7285", contact: "#8257B7", company: "#5A6B7B" }[n.source] || "#5A6B7B";
+                return (
+                  <div key={n.id} style={{ background: "#fff", border: `1px solid ${LINE_C}`, borderRadius: 10, padding: "12px 14px" }}>
+                    <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{n.body}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, color, background: color + "16", borderRadius: 5, padding: "2px 7px" }}>{label}</span>
+                      <span style={{ fontSize: 12, opacity: 0.5 }}>{nameOf(n.authorId) || "Someone"} · {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Panel>
+      )}
 
       {/* ATTACHMENTS */}
       {tab === "attachments" && <AttachmentsSection companyId={companyId} attachments={attachments} nameOf={nameOf} reload={loadSub} />}
