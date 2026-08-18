@@ -1107,7 +1107,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
 
       {showUpload && <LeadUpload users={users} assignable={assignable} campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowUpload(false)} />}
       {showCampaigns && <CampaignManager campaigns={campaigns} leads={leads} refetch={refetch} onClose={() => setShowCampaigns(false)} />}
-      {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} onClose={() => setShowReport(false)} />}
+      {showReport && <CampaignReport campaigns={campaigns} leads={leads} users={users} assignable={assignable} refetch={refetch} onClose={() => setShowReport(false)} />}
     </>
   );
 }
@@ -1216,9 +1216,13 @@ function CampaignManager({ campaigns, leads, refetch, onClose }) {
 }
 
 // ---- Campaign report (progress per campaign, exportable for vendors) ----
-function CampaignReport({ campaigns, leads, users, onClose }) {
+function CampaignReport({ campaigns, leads, users, assignable, refetch, onClose }) {
   const nameOf = (id) => { const u = users.find((x) => x.id === id); return u ? u.name : ""; };
+  const campNameOf = (id) => { const c = (campaigns || []).find((x) => x.id === id); return c ? c.name : ""; };
+  const matchUser = (name) => { const n = (name || "").trim().toLowerCase(); if (!n) return null; return (assignable || []).find((u) => u.name.trim().toLowerCase() === n) || null; };
   const [drill, setDrill] = useState(null); // { id, name, vendor } of campaign being drilled into (or "none")
+  const [busy, setBusy] = useState("");
+  const editFileRef = React.useRef(null);
   // Build per-campaign rollups. "converted" leads count as wins.
   const rows = (campaigns || []).map((c) => {
     const cl = leads.filter((l) => l.campaignId === c.id);
@@ -1296,6 +1300,60 @@ function CampaignReport({ campaigns, leads, users, onClose }) {
     XLSX.writeFile(wb, `tellemica-campaign-${safe}-${CURRENT_MONTH}.xlsx`);
   };
 
+  // Editable export of just this campaign's leads (with Lead ID) so you can
+  // reassign/re-status within the campaign and push the same file back.
+  const EDIT_COLS = ["Lead ID", "Company", "Contact", "Phone", "Email", "BAN", "FAN", "Assign To", "Campaign", "Status", "Notes"];
+  const exportDrillEditable = () => {
+    if (!drill) return;
+    const data = drillLeads.map((l) => ({
+      "Lead ID": l.id, Company: l.company || "", Contact: l.contact || "", Phone: l.phone || "", Email: l.email || "",
+      BAN: l.ban || "", FAN: l.fan || "", "Assign To": nameOf(l.assignedTo) || "",
+      Campaign: campNameOf(l.campaignId) || drill.name || "", Status: l.status || "new", Notes: l.notes || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data, { header: EDIT_COLS });
+    ws["!cols"] = [{ wch: 38 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 12 }, { wch: 34 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    const safe = drill.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    XLSX.writeFile(wb, `tellemica-campaign-${safe}-edit-${CURRENT_MONTH}.xlsx`);
+  };
+  const onEditFile = async (file) => {
+    setBusy("Reading…");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "", raw: false });
+      // Resolve campaign names -> ids (create new ones on the fly).
+      const campCache = {};
+      (campaigns || []).forEach((c) => { campCache[c.name.trim().toLowerCase()] = c.id; });
+      const payload = [];
+      for (const r of raw) {
+        const company = String(r["Company"] || "").trim();
+        if (!company) continue;
+        const a = String(r["Assign To"] || "").trim();
+        const u = a ? matchUser(a) : null;
+        if (a && !u) throw new Error(`No BDR/Sales Rep named "${a}" (row for ${company}).`);
+        let status = String(r["Status"] || "new").trim().toLowerCase();
+        if (!LEAD_STATUSES.includes(status)) status = "new";
+        const cname = String(r["Campaign"] || "").trim();
+        const ckey = cname.toLowerCase();
+        if (cname && !campCache[ckey]) campCache[ckey] = await api.findOrCreateCampaign(cname);
+        const id = String(r["Lead ID"] || "").trim();
+        payload.push({ ...(id ? { id } : {}), company, contact: String(r["Contact"] || "").trim(), phone: String(r["Phone"] || "").trim(),
+          email: String(r["Email"] || "").trim(), ban: String(r["BAN"] || "").trim(), fan: String(r["FAN"] || "").trim(),
+          notes: String(r["Notes"] || "").trim(), status, assignedTo: u ? u.id : null,
+          campaignId: cname ? campCache[ckey] : null });
+      }
+      if (payload.length === 0) { alert("No lead rows found in that file."); setBusy(""); return; }
+      const { updated, inserted } = await api.upsertLeadsFromUpload(payload);
+      await refetch();
+      const parts = []; if (updated) parts.push(`${updated} updated`); if (inserted) parts.push(`${inserted} added`);
+      setBusy("");
+      alert(parts.length ? `Done — ${parts.join(", ")}.` : "No changes.");
+    } catch (e) { setBusy(""); alert("Upload failed: " + (e?.message || "")); }
+    finally { if (editFileRef.current) editFileRef.current.value = ""; }
+  };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(11,42,74,.5)", display: "grid", placeItems: "center", padding: 20, zIndex: 60 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: CARD, borderRadius: 16, padding: 24, width: "min(920px, 96vw)", maxHeight: "90vh", overflowY: "auto" }}>
@@ -1309,12 +1367,21 @@ function CampaignReport({ campaigns, leads, users, onClose }) {
             <button onClick={() => setDrill(null)} className="tap" style={{ display: "flex", alignItems: "center", gap: 5, background: "transparent", border: "none", color: EMAIL, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: 0 }}>
               <ChevronLeft size={15} /> All campaigns
             </button>
-            <button onClick={exportDrill} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 14px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
-              <Download size={15} /> Export this campaign
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={exportDrill} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "9px 13px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                <Download size={15} /> Vendor report
+              </button>
+              <button onClick={exportDrillEditable} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", color: INK, border: `1px solid ${LINE_C}`, borderRadius: 9, padding: "9px 13px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                <Download size={15} /> Export to edit
+              </button>
+              <button onClick={() => editFileRef.current && editFileRef.current.click()} className="tap" style={{ display: "flex", alignItems: "center", gap: 7, background: INK, color: PAPER, border: "none", borderRadius: 9, padding: "9px 13px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>
+                <FileSpreadsheet size={15} /> Upload edits
+              </button>
+              <input ref={editFileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onEditFile(f); }} />
+            </div>
           </div>
           <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: "6px 0 2px" }}>{drill.name}{drill.vendor ? <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.5 }}> · {drill.vendor}</span> : ""}</h2>
-          <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 16px" }}>{drillLeads.length} lead{drillLeads.length === 1 ? "" : "s"} in this campaign.</p>
+          <p style={{ fontSize: 13, opacity: 0.6, margin: "0 0 16px" }}>{drillLeads.length} lead{drillLeads.length === 1 ? "" : "s"} in this campaign.{busy && <b style={{ color: CALL }}> · {busy}</b>}</p>
 
           {/* Rep-level breakdown */}
           <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8494A6", marginBottom: 8 }}>By rep</div>
