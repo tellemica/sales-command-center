@@ -1031,7 +1031,7 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
 
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 640, tableLayout: "auto" }}>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
                 {canManageAll && (
@@ -1054,10 +1054,10 @@ function LeadsView({ leads, campaigns, users, effectiveUser, visibleUserIds, ref
                       <input type="checkbox" checked={selected.has(l.id)} onChange={() => toggleOne(l.id)} style={{ cursor: "pointer" }} />
                     </td>
                   )}
-                  <td style={{ padding: "10px 14px", fontWeight: 600, whiteSpace: "nowrap" }}>
-                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0 }}>{l.company}</button>
+                  <td style={{ padding: "10px 14px", fontWeight: 600 }}>
+                    <button onClick={() => onOpenCompany(l.company)} className="tap" style={{ background: "transparent", border: "none", color: EMAIL, fontWeight: 600, fontSize: 13, cursor: "pointer", padding: 0, textAlign: "left" }}>{l.company}</button>
                   </td>
-                  <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.contact || "—"}</td>
+                  <td style={{ padding: "10px 14px" }}>{l.contact || "—"}</td>
                   <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>{l.phone || "—"}</td>
                   <td style={{ padding: "10px 14px" }}>
                     {canManageAll ? (
