@@ -2219,12 +2219,22 @@ function CompaniesList({ companies, entries, deals, onOpen, refetch }) {
       </div>
 
       <div style={{ background: CARD, border: `1px solid ${LINE_C}`, borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, minWidth: 760 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5, tableLayout: "fixed" }}>
+            <colgroup>
+              <col />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 58 }} />
+              <col style={{ width: 62 }} />
+              <col style={{ width: 58 }} />
+              <col style={{ width: 58 }} />
+              <col style={{ width: 92 }} />
+              <col style={{ width: 96 }} />
+            </colgroup>
             <thead>
               <tr style={{ background: "#F1F5F9" }}>
-                {["Company", "Type", "Activities", "Calls", "Emails", "Appts", "Deals", "Opportunities", "Last activity"].map((h) => (
-                  <th key={h} style={{ textAlign: h === "Company" ? "left" : "center", padding: "11px 14px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap" }}>{h}</th>
+                {["Company", "Type", "Activities", "Calls", "Emails", "Appts", "Deals", "Opps", "Last activity"].map((h) => (
+                  <th key={h} style={{ textAlign: h === "Company" ? "left" : "center", padding: "11px 10px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: "#5A6B7B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -2236,28 +2246,27 @@ function CompaniesList({ companies, entries, deals, onOpen, refetch }) {
                 return (
                   <tr key={c.id} className="tap" onClick={() => onOpen(c.id)}
                     style={{ borderTop: `1px solid ${LINE_C}`, cursor: "pointer" }}>
-                    <td style={{ padding: "11px 14px", fontWeight: 600, color: EMAIL, whiteSpace: "nowrap" }}>{c.name}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>
+                    <td style={{ padding: "11px 12px", fontWeight: 600, color: EMAIL, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>
                       <button onClick={(e) => toggleClient(c, e)} disabled={savingId === c.id} className="tap"
                         title="Click to toggle client / prospect"
-                        style={{ cursor: "pointer", border: "none", borderRadius: 20, padding: "3px 11px", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap",
+                        style={{ cursor: "pointer", border: "none", borderRadius: 20, padding: "3px 9px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap",
                           background: c.isClient ? "#E7F6EC" : "#EEF2F6", color: c.isClient ? "#1B7A41" : "#5A6B7B" }}>
                         {c.isClient ? "Client" : "Prospect"}
                       </button>
                     </td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.activities || 0}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.calls || 0}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.emails || 0}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.appts || 0}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.deals || 0}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center" }}>{s.pipeline ? "$" + s.pipeline.toLocaleString() : "—"}</td>
-                    <td style={{ padding: "11px 14px", textAlign: "center", whiteSpace: "nowrap", opacity: 0.7 }}>{s.last || "—"}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>{s.activities || 0}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>{s.calls || 0}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>{s.emails || 0}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>{s.appts || 0}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center" }}>{s.deals || 0}</td>
+                    <td style={{ padding: "11px 6px", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.pipeline ? "$" + s.pipeline.toLocaleString() : "—"}</td>
+                    <td style={{ padding: "11px 8px", textAlign: "center", whiteSpace: "nowrap", opacity: 0.7, overflow: "hidden", textOverflow: "ellipsis" }}>{s.last || "—"}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
       </div>
     </>
   );
